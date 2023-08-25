@@ -46,14 +46,14 @@ from . import shock
 from . import cocoon
 from . import jet
 from . import flux
-from .flux import fluxDensity, intensity
+from .flux import fluxDensity, intensity, fluxDensity_ssc
 from .cocoon import (Hz2eV, Msun, c, cgs2mJy, day2sec, eV2Hz, ee, h, hbar,
                      mJy2cgs, me, mp, parsec, sec2day, sigmaT)
 from .jet import (Cone, TopHat, Gaussian, PowerLaw, GaussianCore, PowerLawCore,
                   Spherical)
 
 __all__ = ['__version__',
-           'shock', 'cocoon', 'jet', 'flux', 'fluxDensity', 'intensity',
+           'shock', 'cocoon', 'jet', 'flux', 'fluxDensity', 'fluxDensity_ssc', 'intensity',
            'Hz2eV', 'Msun', 'c', 'cgs2mJy', 'day2sec', 'eV2Hz', 'ee', 'h',
            'hbar', 'mJy2cgs',
            'me', 'mp', 'parsec', 'sec2day', 'sigmaT']

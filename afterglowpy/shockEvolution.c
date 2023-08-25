@@ -327,16 +327,16 @@ void Rudot2D(double t, double *x, void *argv, double *xdot)
     double dRdt = bes * v_light;
 
     double dEdu = 0.0;
-    if(Einj > 0.0 && u>umin)
-        dEdu = -k*Einj*pow(u,-k-1);
+    // if(Einj > 0.0 && u>umin)
+    //     dEdu = -k*Einj*pow(u,-k-1);
 
     double dEdt = 0.0;
     double te = t - R/v_light;
-    if(L0 > 0.0 && te < ts)
-    {
-        double gs2 = (4*u*u+3)*(4*u*u+3) / (8*u*u+9);
-        dEdt = L_inj(te, L0, q, ts) / (gs2*(1+bes)); // Doppler factor (1-bes)
-    }
+    // if(L0 > 0.0 && te < ts)
+    // {
+    //     double gs2 = (4*u*u+3)*(4*u*u+3) / (8*u*u+9);
+    //     dEdt = L_inj(te, L0, q, ts) / (gs2*(1+bes)); // Doppler factor (1-bes)
+    // }
 
     double num = -16*M_PI/3.0 * rho0*R*R * be*u*u * v_light
                     + dEdt/(v_light*v_light);
