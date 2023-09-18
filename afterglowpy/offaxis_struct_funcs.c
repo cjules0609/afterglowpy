@@ -601,8 +601,6 @@ double emissivity_ssc(double nu, double R, double mu, double te,
     double g_m = epsebar * e_th / (ksiN * nprime * m_e * v_light * v_light);
     // (A.19)
     double g_c = 6 * PI * m_e * g * v_light / (sigma_T * B * B * te);
-    // ???
-    // double g_a = 1;
 
     //Inverse Compton adjustment of g_c
     if(specType & IC_COOLING_FLAG)
@@ -650,48 +648,42 @@ double emissivity_ssc(double nu, double R, double mu, double te,
     // nu_a by optical depth
     double nu_a; 
     double k;
-
-    // set frequency dependence
-    // (A.16)
-    int nu_case;
     if (nu_c > nu_m)
     {
+        // a < m < c
         if (nuprime < nu_m) {
-            nu_case = 1;
+            k = 1/3;
         }
+        // m < a < c
         else if (nuprime < nu_c) {
-            nu_case = 2;
+            k = -p/2;
         }
+        // m < c < a
         else {
-            nu_case = 2;
+            k = -p/2;
             }
     }
     else
     {
+        // a < c < m
         if (nuprime < nu_c) {
-            nu_case = 1;
+            k = 1/3;
         }
+        // c < a < m
         else if (nuprime < nu_m) {
-            nu_case = 1;
+            k = 1/3;
         }
+        // c < m < a
         else {
-            nu_case = 2;
+            k = -p/2;
         }
-    }
-    
-    // nu_case 1: a < m
-    // a < m < c ; a < c < m ; c < a < m
-    if (nu_case == 1) {
-        k = 1/3;
-    }
-    // nu_case 2: m < a
-    // m < a < c ; m < c < a ; c < m < a
-    else if (nu_case == 2) {
-        k = -p/2;
     }
     
     nu_a = pow((pow(nu_m,k)*16*M_PI * m_e*m_e*v_light*v_light*g_m)/
     (sqrt(3) * e_e*e_e*e_e * (p-1)*(p+2)*nprime*B*DR),1/(k-2));
+
+    // From (18)
+    double g_a = sqrt(16*m_e*v_light*nu_a/3/e_e/B);
 
     // peak emissivity (A.17)
     double tau_es = sigma_T * n0 * DR;
@@ -768,10 +760,24 @@ double emissivity_ssc(double nu, double R, double mu, double te,
                 *((2/3)*((p+5)/(p-1))-(2/3)*((p-1)/(p+2))+log(nuprime/nu_ic(g_m,nu_m,x0)));
     }
     else if (nu_c < nu_a && nu_a < nu_m) { // case 4
-
+        if (nuprime < nu_ic(g_a,nu_a,x0))
+            C = (0.5*g_c/3/g_a+1)*(g_c/3/g_a+4)*(nuprime/nu_ic(g_a,nu_a,x0));
+        else if (nuprime < nu_ic(g_a,nu_m,x0))
+            C = g_c/3/g_a*pow(nuprime/nu_ic(g_a,nu_a,x0),-0.5)
+                *(g_c/3/g_a/6+9/10+g_c/3/g_a/4*log(nuprime/nu_ic(g_a,nu_a,x0)));
+        else if (nuprime < nu_ic(g_m,nu_m,x0))
+            C = pow(g_c/3/g_a,2)*pow(nuprime/nu_ic(g_a,nu_a,x0),-0.5)
+                * (3/(p-1)-0.5+0.75*log(nu_ic(g_m,nu_m,x0)/nuprime));
+        else
+            C = 9/(2*(p+2))*pow(g_c/3/g_a,2)*(nu_a/nu_m)*pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
+                *(4/(p+3)*pow(g_a/g_m,p-1)*g_a/g_c+3*(p+1)/((p-1)*(p+2))+0.5*log(nuprime/nu_ic(g_m,nu_m,x0)));
     }
     else if (nu_c < nu_a && nu_m < nu_a) { // case 5 & 6
-
+        if (nuprime < nu_ic(g_a,nu_a,x0))
+            C = (3*g_c/3/g_a/2/(p+2)+1)*(3*g_c/3/g_a/(p+2)+4)*(nuprime/nu_ic(g_a,nu_a,x0));
+        else
+            C = 1/(p+2)*(6*g_c/3/g_a/(p+3)+g_c/3/g_a*(9*g_c/3/g_a/2/(p+2)+1)+9*pow(g_c/3/g_a,2)/3*log(nuprime/nu_ic(g_a,nu_a,x0)))
+                *pow(nuprime/nu_ic(g_a,nu_a,x0),-p/2);   
     }
 
     if(em_ssc != em_ssc || em_ssc < 0.0)
