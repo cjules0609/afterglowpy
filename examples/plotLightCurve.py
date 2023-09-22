@@ -35,12 +35,18 @@ h = 4.136e-15 # ev Hz-1
 nu = E/h
 
 # Calculate!
+Z['radType'] = 0
 Fnu = grb.fluxDensity(t, nu, **Z)
-Fnu_ssc = grb.fluxDensity_ssc(t, nu, **Z)
+Z['radType'] = 1
+Fnu_ssc = grb.fluxDensity(t, nu, **Z)
+
+Y = Fnu_ssc / Fnu
+Fnu_KN = Fnu * (1 + Y)
 
 # mJy Hz to cgs
 nuFnu = Fnu * nu * 1e-20
 nuFnu_ssc = Fnu_ssc * nu * 1e-20
+nuFnu_KN = Fnu_KN * nu * 1e-20
 
 # Write to a file
 
@@ -82,7 +88,8 @@ fig, ax = plt.subplots(1, 1)
 
 ax.plot(t, nuFnu, ls='--', label='Synchrotron')
 ax.plot(t, nuFnu_ssc, ls='dotted', label='SSC')
-ax.plot(t, nuFnu+nuFnu_ssc, ls='-', label='Synchrotron + SSC')
+ax.plot(t, nuFnu+nuFnu_ssc, ls='-', label='Synchrotron + SSC (w/o KN)')
+ax.plot(t, nuFnu_KN, ls = '-.', label='Synchrotron + SSC (w/ KN)')
 
 ax.set(xscale='log', xlabel=r'$t$ (s)',
        yscale='log', ylabel=r'$\nu F_\nu$ [1 TeV] (erg cm$^{-2}$ s$^{-1}$)')

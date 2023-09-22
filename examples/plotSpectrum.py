@@ -34,8 +34,10 @@ t = 1 * grb.day2sec  # spectrum at 1 day
 nu = np.geomspace(nua, nub, num=100)
 
 print("Calculating")
+Z['radType'] = 0
 Fnu = grb.fluxDensity(t, nu, **Z)
-Fnu_ssc = grb.fluxDensity_ssc(t, nu, **Z)
+Z['radType'] = 1
+Fnu_ssc = grb.fluxDensity(t, nu, **Z)
 
 # mJy Hz to cgs
 Fnu = Fnu * 1e-20

@@ -355,7 +355,7 @@ void make_R_table(struct fluxParams *pars)
 
 double emissivity(double nu, double R, double mu, double te,
                     double u, double us, double n0, double p, double epse,
-                    double epsB, double ksiN, int specType)
+                    double epsB, double ksiN, int specType, int radType)
 {
     if(us < 1.0e-5)
     {
@@ -429,38 +429,138 @@ double emissivity(double nu, double R, double mu, double te,
     // (A.18)
     double nu_m = 3.0 * g_m * g_m * e_e * B / (4.0 * PI * m_e * v_light);
     double nu_c = 3.0 * g_c * g_c * e_e * B / (4.0 * PI * m_e * v_light);
-    // (A.17)
-    double em = 0.5*(p - 1.0)*sqrt(3.0) * e_e*e_e*e_e * ksiN * nprime * B
-                    / (m_e*v_light*v_light);
+    // nu_a by optical depth
+    double nu_a; 
+    if ((nu_c > nu_m && nuprime < nu_m) || (nu_c < nu_m && nuprime < nu_c) || (nu_c < nu_m && nuprime > nu_m))
+        nu_a = pow((pow(nu_m,1/3)*16*M_PI * m_e*m_e*v_light*v_light*g_m)
+            /(sqrt(3) * e_e*e_e*e_e * (p-1)*(p+2)*nprime*B*DR),1/(1/3-2));
+    else 
+        nu_a = pow((pow(nu_m,-p/2)*16*M_PI * m_e*m_e*v_light*v_light*g_m)
+            /(sqrt(3) * e_e*e_e*e_e * (p-1)*(p+2)*nprime*B*DR),1/(-p/2-2));
+
+    // From (Ryan+20 eq. 18)
+    double g_a = sqrt(16*m_e*v_light*nu_a/3/e_e/B);
 
     double freq = 0.0; // frequency dependent part of emissivity
-
-
-    // set frequency dependence
-    // (A.16)
-    if (nu_c > nu_m)
-    {
-        if (nuprime < nu_m) {
-            freq = pow(nuprime / nu_m, 1.0 / 3.0 );
+    double em;
+    // Synchrotron
+    if (radType == 0) {
+        // (A.17)
+        em = 0.5*(p - 1.0)*sqrt(3.0) * e_e*e_e*e_e * ksiN * nprime * B
+                        / (m_e*v_light*v_light);
+        // set frequency dependence
+        // (A.16)
+        if (nu_c > nu_m)
+        {
+            if (nuprime < nu_m)
+                freq = pow(nuprime / nu_m, 1.0 / 3.0 );
+            else if (nuprime < nu_c)
+                freq = pow(nuprime / nu_m, 0.5 * (1.0 - p));
+            else
+                freq = pow(nu_c / nu_m, 0.5 * (1.0 - p)) * pow(nuprime / nu_c, -0.5*p);
         }
-        else if (nuprime < nu_c) {
-            freq = pow(nuprime / nu_m, 0.5 * (1.0 - p));
+        else
+        {
+            if (nuprime < nu_c)
+                freq = pow(nuprime / nu_c, 1.0/3.0);
+            else if (nuprime < nu_m)
+                freq = sqrt(nu_c / nuprime);
+            else
+                freq = sqrt(nu_c/nu_m) * pow(nuprime / nu_m, -0.5 * p);
         }
-        else {
-            freq = pow(nu_c / nu_m, 0.5 * (1.0 - p)) 
-                    * pow(nuprime / nu_c, -0.5*p);
-            }
     }
-    else
-    {
-        if (nuprime < nu_c) {
-            freq = pow(nuprime / nu_c, 1.0/3.0);
+    // SSC
+    else if (radType == 1) {
+        double tau_es = sigma_T * n0 * DR;
+        em = 0.5*(p - 1.0)*sqrt(3.0) * e_e*e_e*e_e * ksiN * nprime * B
+                    / (m_e*v_light*v_light) * tau_es;
+        double x0 = 1;
+        // set frequency dependence
+        if (nu_a < nu_m && nu_m < nu_c) { // case 1
+            if (nuprime < nu_ic(g_m,nu_a,x0))
+                freq = pow(nu_a/nu_m,1/3)
+                    *(nuprime/nu_ic(g_m,nu_a,x0))
+                    *5*(p-1)/(2*(p+1));
+            else if (nuprime < nu_ic(g_m,nu_m,x0))
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),1/3)
+                    *3*(p-1)/(2*(p-1/3));
+            else if (nuprime < nu_ic(g_m,nu_c,x0))
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
+                    *(p-1)/(p+1)
+                    *((4*(p+1/3)/((p+1)*(p-1/3))+log(nuprime/nu_ic(g_m,nu_m,x0))));
+            else if (nuprime < nu_ic(g_c,nu_c,x0))
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
+                    *(p-1)/(p+1)
+                    *((2*(2*p+3)/(p+2)-2/((p+1)*(p+2))+log(nu_ic(g_c,nu_c,x0)/nuprime)));
+            else
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
+                    *(p-1)/(p+1)*(nu_c/nu_m)
+                    *((2*(2*p+3)/(p+2)-2/((p+2)*(p+2))+((p+1)/(p+2)*log(nuprime/nu_ic(g_c,nu_c,x0)))));
         }
-        else if (nuprime < nu_m) {
-            freq = sqrt(nu_c / nuprime);
+        else if (nu_m < nu_a && nu_a < nu_c) { // case 2
+            if (nuprime < nu_ic(g_m,nu_a,x0))
+                freq = pow(nu_m/nu_a,(p+1)/2)
+                    *(2*(p+4)*(p-1)/(3*(p+1)*(p+1)))
+                    *(nuprime/nu_ic(g_m,nu_m,x0));
+            else if (nuprime < nu_ic(g_m,nu_c,x0))
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
+                    *(p-1)/(p+1)
+                    *((2*(2*p+5)/((p+1)*(p+4))+log(nuprime/nu_ic(g_m,nu_a,x0))));
+            else if (nuprime < nu_ic(g_c,nu_a,x0))
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
+                    *(p-1)/(p+1)
+                    *(2+(2/(p+4))+log(nu_c/nu_a));
+            else if (nuprime < nu_ic(g_c,nu_c,x0))
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
+                    *(p-1)/(p+1)
+                    *((2*(2*p+1)/(p+1)+log(nu_ic(g_c,nu_c,x0)/nuprime)));
+            else
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
+                    *(p-1)/(p+2)
+                    *(nu_c/nu_m)
+                    *((2*(2*p+5)/(p+2)+(log(nuprime/nu_ic(g_c,nu_c,x0)))));
         }
-        else {
-            freq = sqrt(nu_c/nu_m) * pow(nuprime / nu_m, -0.5 * p);
+        else if (nu_a < nu_c && nu_c < nu_m) { // case 3
+            if (nuprime < nu_ic(g_c,nu_a,x0))
+                freq = pow(nu_a/nu_c,1/3)
+                    *(5/6)
+                    *(nuprime/nu_ic(g_c,nu_a,x0));
+            else if (nuprime < nu_ic(g_c,nu_c,x0))
+                freq = pow(nuprime/nu_ic(g_c,nu_c,x0),1/3)
+                    *(9/10);
+            else if (nuprime < nu_ic(g_c,nu_m,x0))
+                freq = pow(nuprime/nu_ic(g_c,nu_c,x0),(-1/2))
+                    *(1/3)
+                    *(28/15 + log(nuprime/nu_ic(g_c,nu_c,x0)));
+            else if (nuprime < nu_ic(g_m,nu_m,x0))
+                freq = pow(nuprime/nu_ic(g_c,nu_c,x0),-1/2)
+                    *(1/3)
+                    *((2*(p+5)/((p+2)*(p-1)))-(2/3)*((p-1)/(p+2))+log(nu_ic(g_m,nu_m,x0)/nuprime));
+            else
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
+                    *(1/(p+2))
+                    *(nu_c/nu_m)
+                    *((2/3)*((p+5)/(p-1))-(2/3)*((p-1)/(p+2))+log(nuprime/nu_ic(g_m,nu_m,x0)));
+        }
+        else if (nu_c < nu_a && nu_a < nu_m) { // case 4
+            if (nuprime < nu_ic(g_a,nu_a,x0))
+                freq = (0.5*g_c/3/g_a+1)*(g_c/3/g_a+4)*(nuprime/nu_ic(g_a,nu_a,x0));
+            else if (nuprime < nu_ic(g_a,nu_m,x0))
+                freq = g_c/3/g_a*pow(nuprime/nu_ic(g_a,nu_a,x0),-0.5)
+                    *(g_c/3/g_a/6+9/10+g_c/3/g_a/4*log(nuprime/nu_ic(g_a,nu_a,x0)));
+            else if (nuprime < nu_ic(g_m,nu_m,x0))
+                freq = pow(g_c/3/g_a,2)*pow(nuprime/nu_ic(g_a,nu_a,x0),-0.5)
+                    * (3/(p-1)-0.5+0.75*log(nu_ic(g_m,nu_m,x0)/nuprime));
+            else
+                freq = 9/(2*(p+2))*pow(g_c/3/g_a,2)*(nu_a/nu_m)*pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
+                    *(4/(p+3)*pow(g_a/g_m,p-1)*g_a/g_c+3*(p+1)/((p-1)*(p+2))+0.5*log(nuprime/nu_ic(g_m,nu_m,x0)));
+        }
+        else if (nu_c < nu_a && nu_m < nu_a) { // case 5 & 6
+            if (nuprime < nu_ic(g_a,nu_a,x0))
+                freq = (3*g_c/3/g_a/2/(p+2)+1)*(3*g_c/3/g_a/(p+2)+4)*(nuprime/nu_ic(g_a,nu_a,x0));
+            else
+                freq = 1/(p+2)*(6*g_c/3/g_a/(p+3)+g_c/3/g_a*(9*g_c/3/g_a/2/(p+2)+1)+9*pow(g_c/3/g_a,2)/3*log(nuprime/nu_ic(g_a,nu_a,x0)))
+                    *pow(nuprime/nu_ic(g_a,nu_a,x0),-p/2);   
         }
     }
 
@@ -563,527 +663,6 @@ double emissivity(double nu, double R, double mu, double te,
     return R * R * DR * em_lab;
 }
 
-// Method 1: optical depth
-double emissivity_ssc(double nu, double R, double mu, double te,
-                    double u, double us, double n0, double p, double epse,
-                    double epsB, double ksiN, int specType
-                    )
-{
-
-    if(us < 1.0e-5)
-    {
-        //shock is ~ at sound speed of warm ISM. Won't shock, approach invalid.
-        return 0.0;
-    }
-    if(R == 0.0)
-        return 0.0;
-
-    double g = sqrt(1+u*u);
-    double beta = u/g;
-    double betaS = us / sqrt(1+us*us);
-    double nprime = 4.0 * n0 * g; // comoving number density
-    double e_th = u*u/(g+1) * nprime * m_p * v_light * v_light; // comoving
-    double B = sqrt(epsB * 8.0 * PI * e_th); // comoving
-    double a = (1.0 - mu * beta); // beaming factor
-    double ashock = (1.0 - mu * betaS); // shock velocity beaming factor
-    double DR = R / (12.0 * g*g * ashock);
-    if (DR < 0.0) DR *= -1.0; // DR is function of the absolute value of mu
-
-    double epsebar;
-    if(specType & EPS_E_BAR_FLAG)
-        epsebar = epse;
-    else
-        epsebar = (2.0-p) / (1.0-p) * epse;
-
-    // set local emissivity 
-    double nuprime = nu * g * a; // comoving observer frequency
-    // (A.18)
-    double g_m = epsebar * e_th / (ksiN * nprime * m_e * v_light * v_light);
-    // (A.19)
-    double g_c = 6 * PI * m_e * g * v_light / (sigma_T * B * B * te);
-
-    //Inverse Compton adjustment of g_c
-    if(specType & IC_COOLING_FLAG)
-    {
-        double gr = g_c / g_m;
-        double y = beta * epse/epsB;
-        double X = 1.0;
-
-        if(gr <= 1.0 || gr*gr-gr-y <= 0.0)
-        {
-            //Fast Cooling
-            X = 0.5*(1 + sqrt(1+4*y));
-        }
-        else
-        {
-            //Slow Cooling
-            double b = y * pow(gr, 2-p);
-            double Xa = 1 + b;
-            double Xb = pow(b, 1.0/(4-p)) + 1.0/(4-p);
-            double s = b*b / (b*b + 1);
-            X = Xa * pow(Xb/Xa, s);
-            int i;
-            for(i=0; i<5; i++)
-            {
-                double po = pow(X, p-2);
-                double f = X*X - X - b*po;
-                double df = 2*X - 1 - (p-2)*b*po/X;
-                double dX = -f/df;
-                X += dX;
-                if(fabs(dX) < 1.0e-4*X)
-                    break;
-            }
-        }
-
-        g_c /= X;
-    }
-
-    // (A.18)
-    double nu_m = 3.0 * g_m * g_m * e_e * B / (4.0 * PI * m_e * v_light);
-    double nu_c = 3.0 * g_c * g_c * e_e * B / (4.0 * PI * m_e * v_light);
-    // (A.17)
-    double em = 0.5*(p - 1.0)*sqrt(3.0) * e_e*e_e*e_e * ksiN * nprime * B
-                    / (m_e*v_light*v_light);
-
-    // nu_a by optical depth
-    double nu_a; 
-    double k;
-    if (nu_c > nu_m)
-    {
-        // a < m < c
-        if (nuprime < nu_m) {
-            k = 1/3;
-        }
-        // m < a < c
-        else if (nuprime < nu_c) {
-            k = -p/2;
-        }
-        // m < c < a
-        else {
-            k = -p/2;
-            }
-    }
-    else
-    {
-        // a < c < m
-        if (nuprime < nu_c) {
-            k = 1/3;
-        }
-        // c < a < m
-        else if (nuprime < nu_m) {
-            k = 1/3;
-        }
-        // c < m < a
-        else {
-            k = -p/2;
-        }
-    }
-    
-    nu_a = pow((pow(nu_m,k)*16*M_PI * m_e*m_e*v_light*v_light*g_m)/
-    (sqrt(3) * e_e*e_e*e_e * (p-1)*(p+2)*nprime*B*DR),1/(k-2));
-
-    // From (18)
-    double g_a = sqrt(16*m_e*v_light*nu_a/3/e_e/B);
-
-    // peak emissivity (A.17)
-    double tau_es = sigma_T * n0 * DR;
-    double em_ssc = 0.5*(p - 1.0)*sqrt(3.0) * e_e*e_e*e_e * ksiN * nprime * B
-                    / (m_e*v_light*v_light) * tau_es;
-
-    double C = 0.0; // frequency dependent part of emissivity
-    double x0 = 1;
-    // set frequency dependence
-    if (nu_a < nu_m && nu_m < nu_c) { // case 1
-        if (nuprime < nu_ic(g_m,nu_a,x0))
-            C = pow(nu_a/nu_m,1/3)
-                *(nuprime/nu_ic(g_m,nu_a,x0))
-                *5*(p-1)/(2*(p+1));
-        else if (nuprime < nu_ic(g_m,nu_m,x0))
-            C = pow(nuprime/nu_ic(g_m,nu_m,x0),1/3)
-                *3*(p-1)/(2*(p-1/3));
-        else if (nuprime < nu_ic(g_m,nu_c,x0))
-            C = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
-                *(p-1)/(p+1)
-                *((4*(p+1/3)/((p+1)*(p-1/3))+log(nuprime/nu_ic(g_m,nu_m,x0))));
-        else if (nuprime < nu_ic(g_c,nu_c,x0))
-            C = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
-                *(p-1)/(p+1)
-                *((2*(2*p+3)/(p+2)-2/((p+1)*(p+2))+log(nu_ic(g_c,nu_c,x0)/nuprime)));
-        else
-            C = pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
-                *(p-1)/(p+1)*(nu_c/nu_m)
-                *((2*(2*p+3)/(p+2)-2/((p+2)*(p+2))+((p+1)/(p+2)*log(nuprime/nu_ic(g_c,nu_c,x0)))));
-    }
-    else if (nu_m < nu_a && nu_a < nu_c) { // case 2
-        if (nuprime < nu_ic(g_m,nu_a,x0))
-            C = pow(nu_m/nu_a,(p+1)/2)
-                *(2*(p+4)*(p-1)/(3*(p+1)*(p+1)))
-                *(nuprime/nu_ic(g_m,nu_m,x0));
-        else if (nuprime < nu_ic(g_m,nu_c,x0))
-            C = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
-                *(p-1)/(p+1)
-                *((2*(2*p+5)/((p+1)*(p+4))+log(nuprime/nu_ic(g_m,nu_a,x0))));
-        else if (nuprime < nu_ic(g_c,nu_a,x0))
-            C = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
-                *(p-1)/(p+1)
-                *(2+(2/(p+4))+log(nu_c/nu_a));
-        else if (nuprime < nu_ic(g_c,nu_c,x0))
-            C = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
-                *(p-1)/(p+1)
-                *((2*(2*p+1)/(p+1)+log(nu_ic(g_c,nu_c,x0)/nuprime)));
-        else
-            C = pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
-                *(p-1)/(p+2)
-                *(nu_c/nu_m)
-                *((2*(2*p+5)/(p+2)+(log(nuprime/nu_ic(g_c,nu_c,x0)))));
-    }
-    else if (nu_a < nu_c && nu_c < nu_m) { // case 3
-        if (nuprime < nu_ic(g_c,nu_a,x0))
-            C = pow(nu_a/nu_c,1/3)
-                *(5/6)
-                *(nuprime/nu_ic(g_c,nu_a,x0));
-        else if (nuprime < nu_ic(g_c,nu_c,x0))
-            C = pow(nuprime/nu_ic(g_c,nu_c,x0),1/3)
-                *(9/10);
-        else if (nuprime < nu_ic(g_c,nu_m,x0))
-            C = pow(nuprime/nu_ic(g_c,nu_c,x0),(-1/2))
-                *(1/3)
-                *(28/15 + log(nuprime/nu_ic(g_c,nu_c,x0)));
-        else if (nuprime < nu_ic(g_m,nu_m,x0))
-            C = pow(nuprime/nu_ic(g_c,nu_c,x0),-1/2)
-                *(1/3)
-                *((2*(p+5)/((p+2)*(p-1)))-(2/3)*((p-1)/(p+2))+log(nu_ic(g_m,nu_m,x0)/nuprime));
-        else
-            C = pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
-                *(1/(p+2))
-                *(nu_c/nu_m)
-                *((2/3)*((p+5)/(p-1))-(2/3)*((p-1)/(p+2))+log(nuprime/nu_ic(g_m,nu_m,x0)));
-    }
-    else if (nu_c < nu_a && nu_a < nu_m) { // case 4
-        if (nuprime < nu_ic(g_a,nu_a,x0))
-            C = (0.5*g_c/3/g_a+1)*(g_c/3/g_a+4)*(nuprime/nu_ic(g_a,nu_a,x0));
-        else if (nuprime < nu_ic(g_a,nu_m,x0))
-            C = g_c/3/g_a*pow(nuprime/nu_ic(g_a,nu_a,x0),-0.5)
-                *(g_c/3/g_a/6+9/10+g_c/3/g_a/4*log(nuprime/nu_ic(g_a,nu_a,x0)));
-        else if (nuprime < nu_ic(g_m,nu_m,x0))
-            C = pow(g_c/3/g_a,2)*pow(nuprime/nu_ic(g_a,nu_a,x0),-0.5)
-                * (3/(p-1)-0.5+0.75*log(nu_ic(g_m,nu_m,x0)/nuprime));
-        else
-            C = 9/(2*(p+2))*pow(g_c/3/g_a,2)*(nu_a/nu_m)*pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
-                *(4/(p+3)*pow(g_a/g_m,p-1)*g_a/g_c+3*(p+1)/((p-1)*(p+2))+0.5*log(nuprime/nu_ic(g_m,nu_m,x0)));
-    }
-    else if (nu_c < nu_a && nu_m < nu_a) { // case 5 & 6
-        if (nuprime < nu_ic(g_a,nu_a,x0))
-            C = (3*g_c/3/g_a/2/(p+2)+1)*(3*g_c/3/g_a/(p+2)+4)*(nuprime/nu_ic(g_a,nu_a,x0));
-        else
-            C = 1/(p+2)*(6*g_c/3/g_a/(p+3)+g_c/3/g_a*(9*g_c/3/g_a/2/(p+2)+1)+9*pow(g_c/3/g_a,2)/3*log(nuprime/nu_ic(g_a,nu_a,x0)))
-                *pow(nuprime/nu_ic(g_a,nu_a,x0),-p/2);   
-    }
-
-    if(em_ssc != em_ssc || em_ssc < 0.0)
-    {
-        fprintf(stderr, "bad em_ssc:%.3le te=%.3le mu=%.3lf\n",
-                em_ssc, te, mu);
-        return -1;
-    }
-
-    double em_ssc_lab = em_ssc * C / (g*g * a*a);
-
-    // Self-Absorption
-    if(specType & (SSA_SMOOTH_FLAG | SSA_SHARP_FLAG))
-    {
-        // Co-moving frame absorption coefficient
-        double abs_com_P = sqrt(3) * e_e*e_e*e_e * (p-1)*(p+2)*nprime*B
-                            / (16*M_PI * m_e*m_e*v_light*v_light
-                                * g_m * nuprime*nuprime);
-        double abs_com_freq;
-        if(nuprime < nu_m)
-            abs_com_freq = pow(nuprime / nu_m, 1.0/3.0);
-        else
-            abs_com_freq = pow(nuprime / nu_m, -0.5*p);
-
-        // Lab frame absorption coefficient
-        double abs = abs_com_P * abs_com_freq * a*g;
-
-        // (Signed) Optical depth through this shell.
-        // if negative, face is oriented away from observer.
-        double dtau;
-        if(mu == betaS)
-            dtau = 1.0e100; // HUGE VAL, just in case
-        else
-            dtau = abs * DR * (1 - mu*betaS) / (mu - betaS);
-
-
-        // Now that we know the optical depth, we apply it in a way
-        // according to the given specType
-
-        if((specType & SSA_SMOOTH_FLAG) && (specType & SSA_SHARP_FLAG))
-        {
-            //Special case: use the optically thick limit *everywhere*
-            if(dtau <= 0.0)
-                em_ssc_lab = 0.0;
-            else
-                em_ssc_lab /= dtau;
-        }
-        else if(specType & SSA_SMOOTH_FLAG)
-        {
-            // Apply self-absorption "properly"
-            //
-            // correction factor to emissivity from absorption
-            // ( 1 - e^(-tau) ) / tau  (on front face)
-            //
-            // back face has extra factor ~ e^-betaS/(mu-betaS)
-            //
-            // for now ignoring shadowing by the front face.
-            double abs_fac;
-            if(dtau == 0.0)
-                abs_fac = 1.0;
-            else if(dtau > 0.0)
-                abs_fac = -expm1(-dtau) / dtau;
-            else
-            {
-                abs_fac = expm1(dtau) / dtau; //* exp(
-                            //abs * DR * betaS*mu / (mu - betaS));
-            }
-
-            em_ssc_lab *= abs_fac;
-        }
-        else if(specType & SSA_SHARP_FLAG)
-        {
-            // Apply self-absorption "simply".  
-            //
-            // Compute flux in optically thick limit,
-            // use in final result if less than optically thin calculation.
-            //
-            // e.g. use tau->infty limit if tau > 1.0
-
-            // "Forward" face
-            if(dtau > 1.0)
-                em_ssc_lab /= dtau;
-            
-            // "Back" face --> assume shadowed by front
-            else if(dtau < -1.0)
-                em_ssc_lab = 0.0;
-        }
-    }
-    if(specType < 0)
-        em_ssc_lab = 1.0;
-
-    // Zhang 
-    // return tau_es * C * em_ssc_lab * x0;
-    return R * R * DR * em_ssc_lab;
-}
-
-// Method 2: blackbody
-// double emissivity_ssc2(double I, double nu, double R, double mu, double te,
-//                     double u, double us, double n0, double p, double epse,
-//                     double epsB, double ksiN, int specType)
-// {
-//     if(us < 1.0e-5)
-//     {
-//         //shock is ~ at sound speed of warm ISM. Won't shock, approach invalid.
-//         return 0.0;
-//     }
-//     if(R == 0.0)
-//         return 0.0;
-
-//     // set remaining fluid quantities
-//     double g = sqrt(1+u*u);
-//     double beta = u/g;
-//     double betaS = us / sqrt(1+us*us);
-//     double nprime = 4.0 * n0 * g; // comoving number density
-//     double e_th = u*u/(g+1) * nprime * m_p * v_light * v_light;
-//     double B = sqrt(epsB * 8.0 * PI * e_th);
-//     double a = (1.0 - mu * beta); // beaming factor
-//     double ashock = (1.0 - mu * betaS); // shock velocity beaming factor
-//     double DR = R / (12.0 * g*g * ashock);
-//     if (DR < 0.0) DR *= -1.0; // DR is function of the absolute value of mu
-
-//     double epsebar;
-//     if(specType & EPS_E_BAR_FLAG)
-//         epsebar = epse;
-//     else
-//         epsebar = (2.0-p) / (1.0-p) * epse;
-
-//     // set local emissivity 
-//     double nuprime = nu * g * a; // comoving observer frequency
-//     // (A.18)
-//     double g_m = epsebar * e_th / (ksiN * nprime * m_e * v_light * v_light);
-//     // (A.19)
-//     double g_c = 6 * PI * m_e * g * v_light / (sigma_T * B * B * te);
-
-//     //Inverse Compton adjustment of lfac_c
-//     if(specType & IC_COOLING_FLAG)
-//     {
-//         double gr = g_c / g_m;
-//         double y = beta * epse/epsB;
-//         double X = 1.0;
-
-//         if(gr <= 1.0 || gr*gr-gr-y <= 0.0)
-//         {
-//             //Fast Cooling
-//             X = 0.5*(1 + sqrt(1+4*y));
-//         }
-//         else
-//         {
-//             //Slow Cooling
-//             double b = y * pow(gr, 2-p);
-//             double Xa = 1 + b;
-//             double Xb = pow(b, 1.0/(4-p)) + 1.0/(4-p);
-//             double s = b*b / (b*b + 1);
-//             X = Xa * pow(Xb/Xa, s);
-//             int i;
-//             for(i=0; i<5; i++)
-//             {
-//                 double po = pow(X, p-2);
-//                 double f = X*X - X - b*po;
-//                 double df = 2*X - 1 - (p-2)*b*po/X;
-//                 double dX = -f/df;
-//                 X += dX;
-//                 if(fabs(dX) < 1.0e-4*X)
-//                     break;
-//             }
-//         }
-
-//         g_c /= X;
-//     }
-
-//     // (A.18)
-//     double nu_m = 3.0 * g_m * g_m * e_e * B / (4.0 * PI * m_e * v_light);
-//     double nu_c = 3.0 * g_c * g_c * e_e * B / (4.0 * PI * m_e * v_light);
-//     // bb method g_a << g_m << g_M
-//     double nu_a = I / (2.0 * m_e * g_m);
-//     double g_a = I / (2.0 * m_e * nu_a * nu_a);
-
-//     // (A.17)
-//     double em = 0.5*(p - 1.0)*sqrt(3.0) * e_e*e_e*e_e * ksiN * nprime * B
-//                     / (m_e*v_light*v_light);
-  
-//     double freq = 0.0; // frequency dependent part of emissivity
-
-
-//     // set frequency dependence
-//     // (A.16)
-//     if (nu_c > nu_m)
-//     {
-//         if (nuprime < nu_m) 
-//             freq = pow(nuprime / nu_m, 1.0 / 3.0 );
-//         else if (nuprime < nu_c)
-//             freq = pow(nuprime / nu_m, 0.5 * (1.0 - p));
-//         else
-//             freq = pow(nu_c / nu_m, 0.5 * (1.0 - p))
-//                     * pow(nuprime / nu_c, -0.5*p);
-//     }
-//     else
-//     {
-//         if (nuprime < nu_c)
-//             freq = pow(nuprime / nu_c, 1.0/3.0);
-//         else if (nuprime < nu_m)
-//             freq = sqrt(nu_c / nuprime);
-//         else
-//             freq = sqrt(nu_c/nu_m) * pow(nuprime / nu_m, -0.5 * p);
-//     }
-
-
-//     if(em != em || em < 0.0)
-//     {
-//         fprintf(stderr, "bad em:%.3le te=%.3le mu=%.3lf\n",
-//                 em, te, mu);
-//         return -1;
-//     }
-//     if(freq != freq || freq < 0.0)
-//     {
-//         fprintf(stderr, "bad freq at:%.3le te=%.3le mu=%.3lf\n",
-//                 freq, te, mu);
-//         return -1;
-//     }
-
-//     double em_lab = em * freq / (g*g * a*a);
-
-//     // Self-Absorption
-//     if(specType & (SSA_SMOOTH_FLAG | SSA_SHARP_FLAG))
-//     {
-//         // Co-moving frame absorption coefficient
-//         double abs_com_P = sqrt(3) * e_e*e_e*e_e * (p-1)*(p+2)*nprime*B
-//                             / (16*M_PI * m_e*m_e*v_light*v_light
-//                                 * g_m * nuprime*nuprime);
-//         double abs_com_freq;
-//         if(nuprime < nu_m)
-//             abs_com_freq = pow(nuprime / nu_m, 1.0/3.0);
-//         else
-//             abs_com_freq = pow(nuprime / nu_m, -0.5*p);
-
-//         // Lab frame absorption coefficient
-//         double abs = abs_com_P * abs_com_freq * a*g;
-
-//         // (Signed) Optical depth through this shell.
-//         // if negative, face is oriented away from observer.
-//         double dtau;
-//         if(mu == betaS)
-//             dtau = 1.0e100; // HUGE VAL, just in case
-//         else
-//             dtau = abs * DR * (1 - mu*betaS) / (mu - betaS);
-
-
-//         // Now that we know the optical depth, we apply it in a way
-//         // according to the given specType
-
-//         if((specType & SSA_SMOOTH_FLAG) && (specType & SSA_SHARP_FLAG))
-//         {
-//             //Special case: use the optically thick limit *everywhere*
-//             if(dtau <= 0.0)
-//                 em_lab = 0.0;
-//             else
-//                 em_lab /= dtau;
-//         }
-//         else if(specType & SSA_SMOOTH_FLAG)
-//         {
-//             // Apply self-absorption "properly"
-//             //
-//             // correction factor to emissivity from absorption
-//             // ( 1 - e^(-tau) ) / tau  (on front face)
-//             //
-//             // back face has extra factor ~ e^-betaS/(mu-betaS)
-//             //
-//             // for now ignoring shadowing by the front face.
-//             double abs_fac;
-//             if(dtau == 0.0)
-//                 abs_fac = 1.0;
-//             else if(dtau > 0.0)
-//                 abs_fac = -expm1(-dtau) / dtau;
-//             else
-//             {
-//                 abs_fac = expm1(dtau) / dtau; //* exp(
-//                             //abs * DR * betaS*mu / (mu - betaS));
-//             }
-
-//             em_lab *= abs_fac;
-//         }
-//         else if(specType & SSA_SHARP_FLAG)
-//         {
-//             // Apply self-absorption "simply".  
-//             //
-//             // Compute flux in optically thick limit,
-//             // use in final result if less than optically thin calculation.
-//             //
-//             // e.g. use tau->infty limit if tau > 1.0
-
-//             // "Forward" face
-//             if(dtau > 1.0)
-//                 em_lab /= dtau;
-            
-//             // "Back" face --> assume shadowed by front
-//             else if(dtau < -1.0)
-//                 em_lab = 0.0;
-//         }
-//     }
-//     if(specType < 0)
-//         em_lab = 1.0;
-
-//     return nu_a;
-// }
-
-
 // Solve nu^IC_ij for gamma_i and nu_j
 double nu_ic (double g, double nu, double x0)
 {
@@ -1161,7 +740,7 @@ double costheta_integrand(double aomct, void* params) // inner integral
     
     double dFnu =  emissivity(pars->nu_obs, R, mu, t_e, u, us,
                                 pars->n_0, pars->p, pars->epsilon_E,
-                                pars->epsilon_B, pars->ksi_N, pars->spec_type);
+                                pars->epsilon_B, pars->ksi_N, pars->spec_type, pars->rad_type);
 
     if(dFnu != dFnu || dFnu < 0.0)
     {
@@ -1405,320 +984,7 @@ double phi_integrand(double a_phi, void* params) // outer integral
     return result;
 }
 
-double costheta_integrand_ssc(double aomct, void* params) // inner integral
-{
-    /*
-     * This is the integrand for the inner integral, over theta.
-     * The integral is actually performed over 1-cos(theta), 
-     * which eliminates the geometrical sin(theta) factor the standard volume
-     * element and retains numerical accuracy near theta=0.
-     *
-     * It is good to know that 1 - cos(theta) = 2*sin(theta/2)^2
-     */
-
-    struct fluxParams *pars = (struct fluxParams *) params;
-
-    pars->nevals += 1;
-    
-    //double cp = cos(pars->phi); 
-    //double cto = cos(pars->theta_obs_cur);
-    //double sto = sin(pars->theta_obs_cur);
-    
-    double act = 1 - aomct;
-    double a_theta = 2 * asin(sqrt(0.5 * aomct));
-    double ast = sqrt(aomct * (1+act));
-    pars->theta = a_theta;
-    pars->ct = act;
-    pars->st = ast;
-
-    //double a_theta = acos(act);
-    //double ast = sqrt((1.0 - act)*(1 + act));
-    double mu = ast * (pars->cp) * (pars->sto) + act * (pars->cto);
-
-    int ia = searchSorted(mu, pars->mu_table, pars->table_entries);
-    int ib = ia+1;
-    double t_e = interpolateLin(ia, ib, mu, pars->mu_table, pars->t_table, 
-                            pars->table_entries);
-    t_e = check_t_e(t_e, mu, pars->t_obs, pars->mu_table, pars->table_entries);
-
-    if(t_e < 0.0)
-    {
-        char msg[MSG_LEN];
-        int c = 0;
-        c += snprintf(msg, MSG_LEN-c,
-                     "BAD t_e: %.6lf Eiso=%.3le n0=%.3le thetah=%.3le\n",
-                     t_e, pars->E_iso, pars->n_0, pars->theta_h);
-        c += snprintf(msg+c, MSG_LEN-c,
-                      "    theta_obs=%.3lf phi=%.3lf theta=%.3lf mu=%.3lf\n",
-                      pars->theta_obs, pars->phi, pars->theta, mu);
-        c += snprintf(msg+c, MSG_LEN-c,
-                      "    L0=%.3le q=%.3lf ts=%.3le\n",
-                      pars->L0, pars->q, pars->ts);
-        c += snprintf(msg+c, MSG_LEN-c,
-                      "    t[0]=%.3le t[-1]=%.3le R[0]=%.3le R[-1]=%.3le\n",
-                      pars->t_table[0], pars->t_table[pars->table_entries-1],
-                      pars->R_table[0], pars->R_table[pars->table_entries-1]);
-        c += snprintf(msg+c, MSG_LEN-c,
-                      "    u[0]=%.3le u[-1]=%.3le th[0]=%.3le th[-1]=%.3le\n",
-                      pars->u_table[0], pars->u_table[pars->table_entries-1],
-                      pars->th_table[0], pars->th_table[pars->table_entries-1]);
-        set_error(pars, msg);
-        return 0.0;
-    }
-    
-    double R = interpolateLog(ia, ib, t_e, pars->t_table, pars->R_table, 
-                            pars->table_entries);
-
-    double us, u;
-    u = interpolateLog(ia, ib, t_e, pars->t_table, pars->u_table,
-                                    pars->table_entries);
-    us = shockVel(u);
-    
-    double dFnu =  emissivity_ssc(pars->nu_obs, R, mu, t_e, u, us,
-                                pars->n_0, pars->p, pars->epsilon_E,
-                                pars->epsilon_B, pars->ksi_N, pars->spec_type);
-
-    if(dFnu != dFnu || dFnu < 0.0)
-    {
-        char msg[MSG_LEN];
-        int c = 0;
-        c += snprintf(msg, MSG_LEN,
-                     "bad dFnu:%.3le nu=%.3le R=%.3le th=%.3lf mu=%.3lf\n",
-                     dFnu, pars->nu_obs, R, a_theta, mu);
-        c += snprintf(msg+c, MSG_LEN-c,
-                     "      t=%.3le u=%.3le us=%.3le n0=%.3le p=%.3lf\n",
-                     t_e, u, us, pars->n_0, pars->p);
-        c += snprintf(msg+c, MSG_LEN-c,
-                     "      epse=%.3le epsB=%.3le ksiN=%.3le specType=%d\n",
-                     pars->epsilon_E, pars->epsilon_B, pars->ksi_N,
-                     pars->spec_type);
-        c += snprintf(msg+c, MSG_LEN-c,
-                     "      Rt0=%.3le Rt1=%.3le E_iso=%.3le L0=%.3le ts=%.3le\n",
-                     pars->Rt0, pars->Rt1, pars->E_iso, pars->L0, pars->ts);
-        set_error(pars, msg);
-        return 0.0;
-    }
-
-    int i;
-    double fac = 1.0;
-    for(i=0; i<pars->nmask; i++)
-    {
-        double *m = &((pars->mask)[9*i]);
-        if(m[0]<t_e && t_e<m[1] && m[2]<R && R<m[3] && m[4]<a_theta
-                && a_theta<m[5] && m[6]<pars->phi && pars->phi<m[7])
-            fac = m[8];
-    }
-
-    if(fac != fac || fac < 0.0)
-    {
-        char msg[MSG_LEN];
-        snprintf(msg, MSG_LEN, "bad mask fac: %.3le\n", fac);
-        set_error(pars, msg);
-        return 0.0;
-    }
-
-    return fac * dFnu;
-}
-
 ///////////////////////////////////////////////////////////////////////////////
-
-double phi_integrand_ssc(double a_phi, void* params) // outer integral
-{
-    /*
-     * This is the integrand for the (outer) phi integral. This is the
-     * inner integral over ~theta.  For stability and smoothness, the
-     * integral is performed over 1-cos(theta) instead of over theta 
-     * itself.  It is good to know that 1 - cos(theta) = 2 * sin(theta/2)^2
-     */
-
-    double result;
-
-    struct fluxParams *pars = (struct fluxParams *) params;
-  
-    // set up integration routine
-
-    pars->phi = a_phi;
-    pars->cp = cos(a_phi);
-  
-  // implement sideways spreading approximation until spherical symmetry reached
-    double theta_1 = pars->current_theta_cone_hi;
-    double theta_0 = pars->current_theta_cone_low;
-    double Dtheta = theta_1 - theta_0;
-    int spreadVersion = 1;
-    if(pars->th_table != NULL && spreadVersion==1)
-    {
-        double th_0, th_1;
-        th_1 = find_jet_edge(a_phi, pars->cto, pars->sto, theta_1,
-                             pars->mu_table, pars->th_table,
-                             pars->table_entries);
-
-        if(pars->table_entries_inner == 0)
-        {
-            double frac = theta_0 / theta_1;
-            th_0 = frac * th_1;
-        }
-        else
-        {
-            th_0 = find_jet_edge(a_phi, pars->cto, pars->sto, theta_0,
-                                 pars->mu_table_inner, pars->th_table_inner,
-                                 pars->table_entries_inner);
-        }
-        /*
-        double frac = theta_0 / theta_1;
-        double th_0 = frac * th_1;
-        */
-        theta_0 = th_0;
-        theta_1 = th_1;
-        if(theta_0 > 0.5*M_PI)
-            theta_0 = 0.5*M_PI;
-        if(theta_1 > 0.5*M_PI)
-            theta_1 = 0.5*M_PI;
-    }
-    if(pars->th_table != NULL && spreadVersion==2)
-    {
-        // approx mu
-        double ct = cos(0.5*(theta_0+theta_1));
-        double st = sin(0.5*(theta_0+theta_1));
-        double mu = pars->cp * st * (pars->sto) + ct * (pars->cto);
-
-        int ia = searchSorted(mu, pars->mu_table, pars->table_entries);
-        int ib = ia+1;
-        double th = interpolateLin(ia, ib, mu, pars->mu_table, pars->th_table, 
-                                    pars->table_entries);
-
-        theta_0 *= th/pars->theta_h;
-        theta_1 *= th/pars->theta_h;
-        if(theta_0 > 0.5*M_PI)
-            theta_0 = 0.5*M_PI;
-        if(theta_1 > 0.5*M_PI)
-            theta_1 = 0.5*M_PI;
-    }
-    else if (pars->t_obs > pars->t_NR && spreadVersion==3)
-    {
-        theta_1 = dmin(0.5 * PI, 
-                        pars->theta_h + 0.1 * log( pars->t_obs / pars->t_NR));
-        if(theta_0 != 0.0)
-            theta_0 = theta_1-Dtheta;
-    }
-
-    if(theta_0 >= theta_1)
-        return 0.0;
- 
-    //printf("# theta integration domain: %e - %e\n", theta_1 - Dtheta, theta_1); fflush(stdout);
- 
-    // For a given phi, integrate over 1 - cos(theta)
-
-    double sht0 = sin(0.5*theta_0);
-    double sht1 = sin(0.5*theta_1);
-    double omct0 = 2 * sht0*sht0;
-    double omct1 = 2 * sht1*sht1;
-
-    if(pars->int_type == INT_TRAP_FIXED)
-    {
-        result = trap(&costheta_integrand_ssc, omct0, omct1, pars->nmax_theta,
-                      params, check_error);
-    }
-    else if(pars->int_type == INT_TRAP_ADAPT)
-    {
-        result = trap_adapt(&costheta_integrand_ssc, omct0, omct1,
-                            pars->nmax_theta, pars->atol_theta,
-                            pars->rtol_theta, params, NULL, NULL, NULL, 0,
-                            check_error, NULL, NULL);
-    }
-    else if(pars->int_type == INT_SIMP_FIXED)
-    {
-        result = simp(&costheta_integrand_ssc, omct0, omct1, pars->nmax_theta,
-                      params, check_error);
-    }
-    else if(pars->int_type == INT_SIMP_ADAPT)
-    {
-        result = simp_adapt(&costheta_integrand_ssc, omct0, omct1,
-                            pars->nmax_theta, pars->atol_theta,
-                            pars->rtol_theta, params, NULL, NULL, NULL, 0,
-                            check_error, NULL, NULL);
-    }
-    else if(pars->int_type == INT_ROMB_ADAPT)
-    {
-        int Neval = 0;
-        double err = 0;
-
-        result = romb(&costheta_integrand_ssc, omct0, omct1, pars->nmax_theta,
-                        pars->atol_theta, pars->rtol_theta, params,
-                        &Neval, &err, 0, check_error, NULL, NULL);
-        //printf("phi = %.3lf:  res=%.6lg  err=%.3lg  Neval=%d  tol=%.3g\n",
-        //        a_phi, result, err, Neval,
-        //        pars->atol_theta + pars->rtol_theta*result);
-    }
-    else if(pars->int_type == INT_TRAP_NL)
-    {
-        result = trapNL_adapt(&costheta_integrand_ssc, omct0, omct1,
-                              pars->nmax_theta, pars->atol_theta,
-                              pars->rtol_theta, params, NULL, NULL, NULL, 0,
-                              check_error, NULL, NULL);
-    }
-    else if(pars->int_type == INT_HYBRID)
-    {
-        result = hybrid_adapt(&costheta_integrand_ssc, omct0, omct1,
-                              pars->nmax_theta, pars->atol_theta,
-                              pars->rtol_theta, params, NULL, NULL, 0,
-                              check_error, NULL, NULL);
-    }
-    else if(pars->int_type == INT_CADRE)
-    {
-        result = cadre_adapt(&costheta_integrand_ssc, omct0, omct1,
-                              pars->nmax_theta, pars->atol_theta,
-                              pars->rtol_theta, params, NULL, NULL, 0,
-                              check_error, NULL, NULL);
-    }
-    else if(pars->int_type == INT_GK49_ADAPT)
-    {
-        result = gk49_adapt(&costheta_integrand_ssc, omct0, omct1,
-                              pars->nmax_theta, pars->atol_theta,
-                              pars->rtol_theta, params, NULL, NULL, 0,
-                              check_error);
-    }
-    else if(pars->int_type == INT_GK715_ADAPT)
-    {
-        result = gk715_adapt(&costheta_integrand_ssc, omct0, omct1,
-                              pars->nmax_theta, pars->atol_theta,
-                              pars->rtol_theta, params, NULL, NULL, 0,
-                              check_error);
-    }
-    else if(pars->int_type == INT_GK1021_ADAPT)
-    {
-        result = gk1021_adapt(&costheta_integrand_ssc, omct0, omct1,
-                              pars->nmax_theta, pars->atol_theta,
-                              pars->rtol_theta, params, NULL, NULL, 0,
-                              check_error);
-    }
-    else
-    {
-        char msg[MSG_LEN];
-        snprintf(msg, MSG_LEN,
-                 "Unknown integrator %d!  Aborting.\n", pars->int_type);
-        set_error(pars, msg);
-        return 0.0;
-    }
-    ERR_CHK_DBL(pars)
-
-    if(result != result || result < 0.0)
-    {
-        char msg[MSG_LEN];
-        int c = 0;
-        c += snprintf(msg, MSG_LEN,
-                     "bad result in phi_integrand :%.3le\n", result);
-
-        c += snprintf(msg+c, MSG_LEN-c,
-                     "   t_obs=%.3le theta_lo=%.3lf theta_hi=%.3lf phi=%.3lf\n",
-                     pars->t_obs, theta_0, theta_1, pars->phi);
-        set_error(pars, msg);
-        return 0.0;
-    }
-  
-    //printf("   a_phi: %.6lf (%.6le)\n", a_phi, result);
-
-    return result;
-}
 
 double find_jet_edge(double phi, double cto, double sto, double theta0,
                      double *a_mu, double *a_thj, int N)
@@ -1786,7 +1052,7 @@ double find_jet_edge(double phi, double cto, double sto, double theta0,
 
 ///////////////////////////////////////////////////////////////////////////////
 
-double flux(int emission_type, struct fluxParams *pars, double atol) // determine flux for a given t_obs
+double flux(struct fluxParams *pars, double atol) // determine flux for a given t_obs
 {
     double result;
     double phi_0 = 0.0;
@@ -1808,185 +1074,93 @@ double flux(int emission_type, struct fluxParams *pars, double atol) // determin
     // over theta) to a tolerance of atol / (2*Fcoeff)
     pars->atol_theta = atol/(2*Fcoeff*PI);
 
-
-    if (emission_type == 1) {
-        if(pars->int_type == INT_TRAP_FIXED)
-        {
-            result = 2 * Fcoeff * trap(&phi_integrand_ssc, phi_0, phi_1,
-                                        pars->nmax_phi, pars, check_error);
-        }
-        else if(pars->int_type == INT_TRAP_ADAPT)
-        {
-            result = 2 * Fcoeff * trap_adapt(&phi_integrand_ssc, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            NULL, 0, check_error, NULL, NULL);
-        }
-        else if(pars->int_type == INT_SIMP_FIXED)
-        {
-            result = 2 * Fcoeff * simp(&phi_integrand_ssc, phi_0, phi_1,
-                                        pars->nmax_phi, pars, check_error);
-        }
-        else if(pars->int_type == INT_SIMP_ADAPT)
-        {
-            result = 2 * Fcoeff * simp_adapt(&phi_integrand_ssc, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            NULL, 0, check_error, NULL, NULL);
-        }
-        else if(pars->int_type == INT_ROMB_ADAPT)
-        {
-            double phi_a = phi_0 + 0.5*(phi_1-phi_0);
-            result = 2 * Fcoeff * romb(&phi_integrand_ssc, phi_0, phi_a,
+    if(pars->int_type == INT_TRAP_FIXED)
+    {
+        result = 2 * Fcoeff * trap(&phi_integrand, phi_0, phi_1,
+                                    pars->nmax_phi, pars, check_error);
+    }
+    else if(pars->int_type == INT_TRAP_ADAPT)
+    {
+        result = 2 * Fcoeff * trap_adapt(&phi_integrand, phi_0, phi_1,
                                         pars->nmax_phi, atol/(2*Fcoeff),
-                                        pars->rtol_phi, pars, NULL, NULL, 0,
-                                        check_error, NULL, NULL);
-            ERR_CHK_DBL(pars)
-            result += 2 * Fcoeff * romb(&phi_integrand_ssc, phi_a, phi_1,
-                                        pars->nmax_phi,
-                                        (atol+pars->rtol_phi*result)/(2*Fcoeff),
-                                        pars->rtol_phi, pars, NULL, NULL, 0,
-                                        check_error, NULL, NULL);
-        }
-        else if(pars->int_type == INT_TRAP_NL)
-        {
-            result = 2 * Fcoeff * trapNL_adapt(&phi_integrand_ssc, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            NULL, 0, check_error, NULL, NULL);
-        }
-        else if(pars->int_type == INT_HYBRID)
-        {
-            result = 2 * Fcoeff * hybrid_adapt(&phi_integrand_ssc, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            0, check_error, NULL, NULL);
-        }
-        else if(pars->int_type == INT_CADRE)
-        {
-            result = 2 * Fcoeff * cadre_adapt(&phi_integrand_ssc, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            0, check_error, NULL, NULL);
-        }
-        else if(pars->int_type == INT_GK49_ADAPT)
-        {
-            result = 2 * Fcoeff * gk49_adapt(&phi_integrand_ssc, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            0, check_error);
-        }
-        else if(pars->int_type == INT_GK715_ADAPT)
-        {
-            result = 2 * Fcoeff * gk715_adapt(&phi_integrand_ssc, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            0, check_error);
-        }
-        else if(pars->int_type == INT_GK1021_ADAPT)
-        {
-            result = 2 * Fcoeff * gk1021_adapt(&phi_integrand_ssc, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            0, check_error);
-        }
-        else
-        {
-            char msg[MSG_LEN];
-            snprintf(msg, MSG_LEN,
-                    "Unknown integrator %d!  Aborting.\n", pars->int_type);
-            set_error(pars, msg);
-            return 0.0;
-        }
-    } else {
-        if(pars->int_type == INT_TRAP_FIXED)
-        {
-            result = 2 * Fcoeff * trap(&phi_integrand, phi_0, phi_1,
-                                        pars->nmax_phi, pars, check_error);
-        }
-        else if(pars->int_type == INT_TRAP_ADAPT)
-        {
-            result = 2 * Fcoeff * trap_adapt(&phi_integrand, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            NULL, 0, check_error, NULL, NULL);
-        }
-        else if(pars->int_type == INT_SIMP_FIXED)
-        {
-            result = 2 * Fcoeff * simp(&phi_integrand, phi_0, phi_1,
-                                        pars->nmax_phi, pars, check_error);
-        }
-        else if(pars->int_type == INT_SIMP_ADAPT)
-        {
-            result = 2 * Fcoeff * simp_adapt(&phi_integrand, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            NULL, 0, check_error, NULL, NULL);
-        }
-        else if(pars->int_type == INT_ROMB_ADAPT)
-        {
-            double phi_a = phi_0 + 0.5*(phi_1-phi_0);
-            result = 2 * Fcoeff * romb(&phi_integrand, phi_0, phi_a,
+                                        pars->rtol_phi, pars, NULL, NULL,
+                                        NULL, 0, check_error, NULL, NULL);
+    }
+    else if(pars->int_type == INT_SIMP_FIXED)
+    {
+        result = 2 * Fcoeff * simp(&phi_integrand, phi_0, phi_1,
+                                    pars->nmax_phi, pars, check_error);
+    }
+    else if(pars->int_type == INT_SIMP_ADAPT)
+    {
+        result = 2 * Fcoeff * simp_adapt(&phi_integrand, phi_0, phi_1,
                                         pars->nmax_phi, atol/(2*Fcoeff),
-                                        pars->rtol_phi, pars, NULL, NULL, 0,
-                                        check_error, NULL, NULL);
-            ERR_CHK_DBL(pars)
-            result += 2 * Fcoeff * romb(&phi_integrand, phi_a, phi_1,
-                                        pars->nmax_phi,
-                                        (atol+pars->rtol_phi*result)/(2*Fcoeff),
-                                        pars->rtol_phi, pars, NULL, NULL, 0,
-                                        check_error, NULL, NULL);
-        }
-        else if(pars->int_type == INT_TRAP_NL)
-        {
-            result = 2 * Fcoeff * trapNL_adapt(&phi_integrand, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            NULL, 0, check_error, NULL, NULL);
-        }
-        else if(pars->int_type == INT_HYBRID)
-        {
-            result = 2 * Fcoeff * hybrid_adapt(&phi_integrand, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            0, check_error, NULL, NULL);
-        }
-        else if(pars->int_type == INT_CADRE)
-        {
-            result = 2 * Fcoeff * cadre_adapt(&phi_integrand, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            0, check_error, NULL, NULL);
-        }
-        else if(pars->int_type == INT_GK49_ADAPT)
-        {
-            result = 2 * Fcoeff * gk49_adapt(&phi_integrand, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            0, check_error);
-        }
-        else if(pars->int_type == INT_GK715_ADAPT)
-        {
-            result = 2 * Fcoeff * gk715_adapt(&phi_integrand, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            0, check_error);
-        }
-        else if(pars->int_type == INT_GK1021_ADAPT)
-        {
-            result = 2 * Fcoeff * gk1021_adapt(&phi_integrand, phi_0, phi_1,
-                                            pars->nmax_phi, atol/(2*Fcoeff),
-                                            pars->rtol_phi, pars, NULL, NULL,
-                                            0, check_error);
-        }
-        else
-        {
-            char msg[MSG_LEN];
-            snprintf(msg, MSG_LEN,
-                    "Unknown integrator %d!  Aborting.\n", pars->int_type);
-            set_error(pars, msg);
-            return 0.0;
-        }
+                                        pars->rtol_phi, pars, NULL, NULL,
+                                        NULL, 0, check_error, NULL, NULL);
+    }
+    else if(pars->int_type == INT_ROMB_ADAPT)
+    {
+        double phi_a = phi_0 + 0.5*(phi_1-phi_0);
+        result = 2 * Fcoeff * romb(&phi_integrand, phi_0, phi_a,
+                                    pars->nmax_phi, atol/(2*Fcoeff),
+                                    pars->rtol_phi, pars, NULL, NULL, 0,
+                                    check_error, NULL, NULL);
+        ERR_CHK_DBL(pars)
+        result += 2 * Fcoeff * romb(&phi_integrand, phi_a, phi_1,
+                                    pars->nmax_phi,
+                                    (atol+pars->rtol_phi*result)/(2*Fcoeff),
+                                    pars->rtol_phi, pars, NULL, NULL, 0,
+                                    check_error, NULL, NULL);
+    }
+    else if(pars->int_type == INT_TRAP_NL)
+    {
+        result = 2 * Fcoeff * trapNL_adapt(&phi_integrand, phi_0, phi_1,
+                                        pars->nmax_phi, atol/(2*Fcoeff),
+                                        pars->rtol_phi, pars, NULL, NULL,
+                                        NULL, 0, check_error, NULL, NULL);
+    }
+    else if(pars->int_type == INT_HYBRID)
+    {
+        result = 2 * Fcoeff * hybrid_adapt(&phi_integrand, phi_0, phi_1,
+                                        pars->nmax_phi, atol/(2*Fcoeff),
+                                        pars->rtol_phi, pars, NULL, NULL,
+                                        0, check_error, NULL, NULL);
+    }
+    else if(pars->int_type == INT_CADRE)
+    {
+        result = 2 * Fcoeff * cadre_adapt(&phi_integrand, phi_0, phi_1,
+                                        pars->nmax_phi, atol/(2*Fcoeff),
+                                        pars->rtol_phi, pars, NULL, NULL,
+                                        0, check_error, NULL, NULL);
+    }
+    else if(pars->int_type == INT_GK49_ADAPT)
+    {
+        result = 2 * Fcoeff * gk49_adapt(&phi_integrand, phi_0, phi_1,
+                                        pars->nmax_phi, atol/(2*Fcoeff),
+                                        pars->rtol_phi, pars, NULL, NULL,
+                                        0, check_error);
+    }
+    else if(pars->int_type == INT_GK715_ADAPT)
+    {
+        result = 2 * Fcoeff * gk715_adapt(&phi_integrand, phi_0, phi_1,
+                                        pars->nmax_phi, atol/(2*Fcoeff),
+                                        pars->rtol_phi, pars, NULL, NULL,
+                                        0, check_error);
+    }
+    else if(pars->int_type == INT_GK1021_ADAPT)
+    {
+        result = 2 * Fcoeff * gk1021_adapt(&phi_integrand, phi_0, phi_1,
+                                        pars->nmax_phi, atol/(2*Fcoeff),
+                                        pars->rtol_phi, pars, NULL, NULL,
+                                        0, check_error);
+    }
+    else
+    {
+        char msg[MSG_LEN];
+        snprintf(msg, MSG_LEN,
+                "Unknown integrator %d!  Aborting.\n", pars->int_type);
+        set_error(pars, msg);
+        return 0.0;
     }
 
     ERR_CHK_DBL(pars)
@@ -2011,7 +1185,7 @@ double flux(int emission_type, struct fluxParams *pars, double atol) // determin
     return result;
 }
 
-void lc_cone(int emission_type, double *t, double *nu, double *F, int Nt, double E_iso,
+void lc_cone(double *t, double *nu, double *F, int Nt, double E_iso,
                 double theta_core, double theta_wing, struct fluxParams *pars)
 {
     int i;
@@ -2021,13 +1195,13 @@ void lc_cone(int emission_type, double *t, double *nu, double *F, int Nt, double
 
     for(i=0; i<Nt; i++)
     {
-        F[i] = flux_cone(emission_type, t[i], nu[i], -1, -1, theta_core, theta_wing, 0.0,
+        F[i] = flux_cone(t[i], nu[i], -1, -1, theta_core, theta_wing, 0.0,
                             pars);
         ERR_CHK_VOID(pars)
     }
 }
 
-void lc_tophat(int emission_type, double *t, double *nu, double *F, int Nt,
+void lc_tophat(double *t, double *nu, double *F, int Nt,
                 double E_iso, double theta_h, struct fluxParams *pars)
 {
     int i;
@@ -2037,12 +1211,12 @@ void lc_tophat(int emission_type, double *t, double *nu, double *F, int Nt,
 
     for(i=0; i<Nt; i++)
     {
-        F[i] = flux_cone(emission_type, t[i], nu[i], -1, -1, 0.0, theta_h, 0.0, pars);
+        F[i] = flux_cone(t[i], nu[i], -1, -1, 0.0, theta_h, 0.0, pars);
         ERR_CHK_VOID(pars)
     }
 }
 
-void lc_struct(int emission_type, double *t, double *nu, double *F, int Nt,
+void lc_struct(double *t, double *nu, double *F, int Nt,
                         double E_iso_core, 
                         double theta_h_core, double theta_h_wing,
                         double *theta_c_arr, double *E_iso_arr,
@@ -2086,7 +1260,7 @@ void lc_struct(int emission_type, double *t, double *nu, double *F, int Nt,
         for(j=0; j<Nt; j++)
         {
             //printf("tobs = %.6le\n", t[j]);
-            F[j] += flux_cone(emission_type, t[j], nu[j], -1, -1, theta_cone_low,
+            F[j] += flux_cone(t[j], nu[j], -1, -1, theta_cone_low,
                                 theta_cone_hi,
                                 F[j]*pars->rtol_struct/res_cones,
                                 pars);
@@ -2095,7 +1269,7 @@ void lc_struct(int emission_type, double *t, double *nu, double *F, int Nt,
     }
 }
 
-void lc_structCore(int emission_type, double *t, double *nu, double *F, int Nt,
+void lc_structCore(double *t, double *nu, double *F, int Nt,
                         double E_iso_core, 
                         double theta_h_core, double theta_h_wing,
                         double *theta_c_arr, double *E_iso_arr,
@@ -2104,7 +1278,7 @@ void lc_structCore(int emission_type, double *t, double *nu, double *F, int Nt,
 {
     //Flux from a structured jet with core.
     
-    lc_tophat(emission_type, t, nu, F, Nt, E_iso_core, theta_h_core, pars);
+    lc_tophat(t, nu, F, Nt, E_iso_core, theta_h_core, pars);
     ERR_CHK_VOID(pars)
 
     double Dtheta, theta_cone_hi, theta_cone_low, theta_h, theta_c, E_iso;
@@ -2134,7 +1308,7 @@ void lc_structCore(int emission_type, double *t, double *nu, double *F, int Nt,
 
         for(j=0; j<Nt; j++)
         {
-            F[j] += flux_cone(emission_type, t[j], nu[j], -1, -1, theta_cone_low,
+            F[j] += flux_cone(t[j], nu[j], -1, -1, theta_cone_low,
                                 theta_cone_hi,
                                 F[j]*pars->rtol_struct/res_cones,
                                 pars);
@@ -2143,7 +1317,7 @@ void lc_structCore(int emission_type, double *t, double *nu, double *F, int Nt,
     }
 }
 
-double flux_cone(int emission_type, double t_obs, double nu_obs, double E_iso, double theta_h,
+double flux_cone(double t_obs, double nu_obs, double E_iso, double theta_h,
                     double theta_cone_low, double theta_cone_hi, double atol,
                     struct fluxParams *pars)
 {
@@ -2165,7 +1339,7 @@ double flux_cone(int emission_type, double t_obs, double nu_obs, double E_iso, d
     theta_obs_cur = theta_obs;
     set_obs_params(pars, t_obs, nu_obs, theta_obs_cur, 
                     theta_cone_hi, theta_cone_low);
-    F1 = flux(emission_type, pars, atol);
+    F1 = flux(pars, atol);
     ERR_CHK_DBL(pars)
     
     //Counter-jet
@@ -2174,7 +1348,7 @@ double flux_cone(int emission_type, double t_obs, double nu_obs, double E_iso, d
         theta_obs_cur = 180*deg2rad - theta_obs;
         set_obs_params(pars, t_obs, nu_obs, theta_obs_cur, 
                         theta_cone_hi, theta_cone_low);
-        F2 = flux(emission_type, pars, atol);
+        F2 = flux(pars, atol);
         ERR_CHK_DBL(pars)
     }
     else
@@ -2266,7 +1440,7 @@ double intensity(double theta, double phi, double tobs, double nuobs,
 
     I = emissivity(pars->nu_obs, R, mu, t_e, u, us, pars->n_0,
                         pars->p, pars->epsilon_E, pars->epsilon_B, 
-                        pars->ksi_N, pars->spec_type);
+                        pars->ksi_N, pars->spec_type, pars->rad_type);
 
     return I;
 }
@@ -2790,7 +1964,7 @@ void shockVals_structCore(double *theta, double *phi, double *tobs,
     }
 }
 
-void calc_flux_density(int emission_type, int jet_type, int spec_type, double *t, double *nu,
+void calc_flux_density(int jet_type, int spec_type, int rad_type, double *t, double *nu,
                             double *Fnu, int N, struct fluxParams *fp)
 {
     int latRes = fp->latRes;
@@ -2803,52 +1977,52 @@ void calc_flux_density(int emission_type, int jet_type, int spec_type, double *t
 
     if(jet_type == _tophat)
     {
-        lc_tophat(emission_type, t, nu, Fnu, N, E_iso_core, theta_h_core, fp);
+        lc_tophat(t, nu, Fnu, N, E_iso_core, theta_h_core, fp);
     }
     else if(jet_type == _cone)
     {
-        lc_cone(emission_type, t, nu, Fnu, N, E_iso_core, theta_h_core, theta_h_wing, fp);
+        lc_cone(t, nu, Fnu, N, E_iso_core, theta_h_core, theta_h_wing, fp);
     }
     else if(jet_type == _Gaussian)
     {
-        lc_struct(emission_type, t, nu, Fnu, N, E_iso_core, theta_h_core, 
+        lc_struct(t, nu, Fnu, N, E_iso_core, theta_h_core, 
                 theta_h_wing, NULL, NULL, res_cones, &f_E_Gaussian, fp);
     }
     else if(jet_type == _powerlaw)
     {
-        lc_struct(emission_type, t, nu, Fnu, N, E_iso_core, theta_h_core, 
+        lc_struct(t, nu, Fnu, N, E_iso_core, theta_h_core, 
                 theta_h_wing, NULL, NULL, res_cones, &f_E_powerlaw, fp);
     }
     else if(jet_type == _twocomponent)
     {
-        lc_struct(emission_type, t, nu, Fnu, N, E_iso_core, theta_h_core, 
+        lc_struct(t, nu, Fnu, N, E_iso_core, theta_h_core, 
                 theta_h_wing, NULL, NULL, res_cones, &f_E_twocomponent, fp);
     }
     else if(jet_type == _Gaussian_core)
     {
-        lc_structCore(emission_type, t, nu, Fnu, N, E_iso_core, theta_h_core, 
+        lc_structCore(t, nu, Fnu, N, E_iso_core, theta_h_core, 
                 theta_h_wing, NULL, NULL, res_cones, &f_E_GaussianCore, fp);
     }
     else if(jet_type == _powerlaw_core)
     {
-        lc_structCore(emission_type, t, nu, Fnu, N, E_iso_core, theta_h_core, 
+        lc_structCore(t, nu, Fnu, N, E_iso_core, theta_h_core, 
                 theta_h_wing, NULL, NULL, res_cones, &f_E_powerlawCore, fp);
     }
     else if(jet_type == _exponential)
     {
-        lc_structCore(emission_type, t, nu, Fnu, N, E_iso_core, theta_h_core, 
+        lc_structCore(t, nu, Fnu, N, E_iso_core, theta_h_core, 
                 theta_h_wing, NULL, NULL, res_cones, &f_E_exponential, fp);
     }
     else if(jet_type == _exponential2)
     {
-        lc_structCore(emission_type, t, nu, Fnu, N, E_iso_core, theta_h_core, 
+        lc_structCore(t, nu, Fnu, N, E_iso_core, theta_h_core, 
                 theta_h_wing, NULL, NULL, res_cones, &f_E_exponential2, fp);
     }
 
     //printf("  Calc took %ld evalutions\n", fp->nevals);
 }    
 
-void calc_intensity(int jet_type, int spec_type, double *theta, double *phi,
+void calc_intensity(int jet_type, int spec_type, int rad_type, double *theta, double *phi,
                             double *t, double *nu, double *Inu, int N,
                             struct fluxParams *fp)
 {
@@ -2963,6 +2137,7 @@ void setup_fluxParams(struct fluxParams *pars,
                     double rtol_struct, double rtol_phi, double rtol_theta,
                     int nmax_phi, int nmax_theta,
                     int spec_type,
+                    int rad_type,
                     double *mask, int nmask,
                     int spread, int counterjet, int gamma_type)
 {
@@ -2980,6 +2155,7 @@ void setup_fluxParams(struct fluxParams *pars,
     pars->table_entries_inner = 0;
 
     pars->spec_type = spec_type;
+    pars->rad_type = rad_type;
     pars->gamma_type = gamma_type;
 
     pars->d_L = d_L;
@@ -3267,6 +2443,8 @@ void set_error(struct fluxParams *pars, char msg[])
             pars->table_entries_inner);
     c += snprintf(dump+c, DUMP_MSG_LEN_MAX-c, "    spec_type: %d\n",
             pars->spec_type);
+    c += snprintf(dump+c, DUMP_MSG_LEN_MAX-c, "    rad_type: %d\n",
+            pars->rad_type);
     c += snprintf(dump+c, DUMP_MSG_LEN_MAX-c, "    gamma_type: %d\n",
             pars->gamma_type);
     c += snprintf(dump+c, DUMP_MSG_LEN_MAX-c, "    nmask: %d\n",

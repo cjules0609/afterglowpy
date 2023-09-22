@@ -136,6 +136,9 @@ def fluxDensity(t, nu, *args, **kwargs):
         Maximum number of evaluations to perform in theta direction during
         numerical integration. Default 1000.
 
+    radType : int, optional
+        Synchrotron (0), SSC (1)
+
     Returns
     -------
     Fnu: array
@@ -189,76 +192,6 @@ def fluxDensity(t, nu, *args, **kwargs):
         Fnu.flat[:] = cocoon.fluxDensity(tz.flat, nuz.flat, **argsDict)
     else:
         Fnu.flat[:] = jet.fluxDensity(tz.flat, nuz.flat, **argsDict)
-    # timeB = time.time()
-    # print("Eval took: {0:f} s".format(timeB - timeA))
-
-    
-    # Adding background luminosities.
-    L_to_flux = cocoon.cgs2mJy / (4*np.pi * argsDict['d_L']**2)
-
-
-    if LR > 0.0:
-        rad = (nuz < 3.0e11) & (tz > tAdd)  # radio < 300 GHz
-        Lnu = LR / 1.0e10  # 10 GHz bandwidth
-        Fnu[rad] += Lnu*L_to_flux
-    if LO > 0.0:
-        # 300GHz<opt<100eV
-        opt = (nuz >= 3.0e11) & (nuz < 100*cocoon.eV2Hz) & (tz > tAdd)
-        Lnu = LO * 2.32478e-5 / cocoon.c # 2324.78 A bandwidth
-        Fnu[opt] += Lnu*L_to_flux
-    if LX > 0.0:
-        xry = (nuz >= 100*cocoon.eV2Hz) & (tz > tAdd)  # xray > 100eV
-        Lnu = LX / (9.7e3 * cocoon.eV2Hz)  # 9.7 keV bandwidth
-        Fnu[xry] += Lnu*L_to_flux
-
-    # K-correct the flux
-    Fnu *= 1+z
-
-    return Fnu
-
-def fluxDensity_ssc(t, nu, *args, **kwargs):
-
-    argsDict = parseArgs(args, kwargs)
-
-    t, nu = checkTNu(t, nu)
-
-    jetType = argsDict['jetType']
-
-    if jetType == jet.Spherical:
-        checkCocoonArgs(**argsDict)
-    else:
-        checkJetArgs(**argsDict)
-
-    # arguments are good, full steam ahead!
-    z = argsDict.pop('z') if 'z' in argsDict else 0.0
-
-    tz = t / (1+z)
-    nuz = nu * (1+z)
-
-    # Default spreading method
-    if 'spread' in argsDict:
-        if argsDict['spread'] == True:
-            if jetType == -2 and 'thetaCoreGlobal' in argsDict:
-                argsDict['spread'] = 8
-            else:
-                argsDict['spread'] = 7
-
-    # Intercept background luminosities
-    # This was a bad idea to add to this function, but is kept for 
-    # backwards compatibility. Please don't use these.
-    LR = argsDict.pop('LR') if 'LR' in argsDict else 0.0
-    LO = argsDict.pop('LO') if 'LO' in argsDict else 0.0
-    LX = argsDict.pop('LX') if 'LX' in argsDict else 0.0
-    tAdd = argsDict.pop('tAdd') if 'tAdd' in argsDict else 0.0
-
-    # timeA = time.time()
-
-    Fnu = np.empty(tz.shape)
-
-    if argsDict['jetType'] == jet.Spherical:
-        Fnu.flat[:] = cocoon.fluxDensity(tz.flat, nuz.flat, **argsDict)
-    else:
-        Fnu.flat[:] = jet.fluxDensity_ssc(tz.flat, nuz.flat, **argsDict)
     # timeB = time.time()
     # print("Eval took: {0:f} s".format(timeB - timeA))
 
@@ -736,8 +669,7 @@ def parseArgs(args, kwargs):
                   FutureWarning)
 
     # Now for the fun part
-
-    jetKeys = ['jetType', 'specType', 'thetaObs', 'E0', 'thetaCore',
+    jetKeys = ['jetType', 'specType', 'radType', 'thetaObs', 'E0', 'thetaCore',
                'thetaWing', 'b', 'L0', 'q', 'ts', 'n0', 'p', 'epsilon_e',
                'epsilon_B', 'xi_N', 'd_L', 'g0', 'LR', 'LO', 'LX', 'tAdd', 'z']
     sphKeys = ['jetType', 'specType', 'uMax', 'uMin', 'Er',
