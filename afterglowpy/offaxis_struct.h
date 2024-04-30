@@ -149,6 +149,7 @@ struct fluxParams
 
     int spec_type;
     int rad_type;
+    int cool_type;
     int gamma_type;
 
     double (*f_E)(double, void *);
@@ -188,7 +189,7 @@ double phi_integrand(double a_phi, void* params); // outer integral
 double nu_ic (double g, double nu, double x0);
 double emissivity(double nu, double R, double mu, double te,
                     double u, double us, double n0, double p, double epse,
-                    double epsB, double ksiN, int specType, int radType); //emissivity of
+                    double epsB, double ksiN, int specType, int radType, int coolType); //emissivity of
                                                              // a zone.
 double flux(struct fluxParams *pars, double atol); // determine flux for a given t_obs
 
@@ -259,10 +260,10 @@ void lc_GaussianCore(double *t, double *nu, double *F, int Nt,
                         double *theta_c_arr, double *E_iso_arr,
                         int res_cones, struct fluxParams *pars);
 
-void calc_flux_density(int jet_type, int spec_type, int rad_type,
+void calc_flux_density(int jet_type, int spec_type, int rad_type, int cool_type,
                             double *t, double *nu, double *Fnu, int N,
                             struct fluxParams *fp);
-void calc_intensity(int jet_type, int spec_type, int rad_type, double *theta, double *phi,
+void calc_intensity(int jet_type, int spec_type, int rad_type, int cool_type, double *theta, double *phi,
                             double *t, double *nu, double *Inu, int N,
                             struct fluxParams *fp);
 void calc_shockVals(int jet_type, double *theta, double *phi, double *tobs,
@@ -288,6 +289,7 @@ void setup_fluxParams(struct fluxParams *pars,
                     int nmax_phi, int nmax_theta,
                     int spec_type,
                     int rad_type,
+                    int cool_type,
                     double *mask, int nmask,
                     int spread, int counterjet, int gamma_type);
 void set_jet_params(struct fluxParams *pars, double E_iso, double theta_h);

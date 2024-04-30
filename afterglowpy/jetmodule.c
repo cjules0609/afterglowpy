@@ -12,6 +12,7 @@
 static const int jet_type_default = -1;
 static const int spec_type_default = 0;
 static const int rad_type_default = 0;
+static const int cool_type_default = 0;
 static const double theta_obs_default = 0.0;
 static const double E_iso_core_default = 1.0e53;
 static const double theta_h_core_default = 0.1;
@@ -210,6 +211,7 @@ static PyObject *jet_fluxDensity(PyObject *self, PyObject *args,
     int jet_type = jet_type_default;
     int spec_type = spec_type_default;
     int rad_type = rad_type_default;
+    int cool_type = cool_type_default;
     double theta_obs = theta_obs_default;
     double E_iso_core = E_iso_core_default;
     double theta_h_core = theta_h_core_default;
@@ -242,7 +244,7 @@ static PyObject *jet_fluxDensity(PyObject *self, PyObject *args,
     int counterjet = counterjet_default;
     int gamma_type = gamma_type_default;
 
-    static char *kwlist[] = {"t", "nu", "jetType", "specType", "radType",
+    static char *kwlist[] = {"t", "nu", "jetType", "specType", "radType", "coolType",
                                 "thetaObs", "E0", "thetaCore", "thetaWing",
                                     "b", "L0", "q", "ts", "n0", "p",
                                     "epsilon_e", "epsilon_B", "xi_N", "d_L",
@@ -256,10 +258,10 @@ static PyObject *jet_fluxDensity(PyObject *self, PyObject *args,
 
     //Parse Arguments
     if(!PyArg_ParseTupleAndKeywords(args, kwargs,
-                "OO|iii""ddddddddddddddd""dd""iiidddii""O""iii",
-                //"OO|iii ddddddddddddddd dd iiidddii O iii",
+                "OO|iiii""ddddddddddddddd""dd""iiidddii""O""iii",
+                //"OO|iiii ddddddddddddddd dd iiidddii O iii",
                 kwlist,
-                &t_obj, &nu_obj, &jet_type, &spec_type, &rad_type,
+                &t_obj, &nu_obj, &jet_type, &spec_type, &rad_type, &cool_type,
                 &theta_obs, &E_iso_core, &theta_h_core, &theta_h_wing, &b, &L0,
                     &q, &ts, &n_0, &p, &epsilon_E, &epsilon_B, &ksi_N, &d_L,
                     &g0,
@@ -392,11 +394,11 @@ static PyObject *jet_fluxDensity(PyObject *self, PyObject *args,
                         tRes, latRes, int_type,
                         rtol_struct, rtol_phi, rtol_theta,
                         nmax_phi, nmax_theta,
-                        spec_type, rad_type, mask, masklen,
+                        spec_type, rad_type, cool_type, mask, masklen,
                         spread, counterjet, gamma_type);
 
     // Calculate the flux!
-    calc_flux_density(jet_type, spec_type, rad_type, t, nu, Fnu, N, &fp);
+    calc_flux_density(jet_type, spec_type, rad_type, cool_type, t, nu, Fnu, N, &fp);
    
     if(fp.error)
     {
@@ -446,12 +448,13 @@ static PyObject *jet_emissivity(PyObject *self, PyObject *args)
 {
     int spec_type = 0;
     int rad_type = 0;
+    int cool_type = 0;
     double nu, R, mu, te, u, us, n0, p, epse, epsB, xi_N;
 
 
     //Parse Arguments
     if(!PyArg_ParseTuple(args, "ddddddddddd|iii", &nu, &R, &mu, &te,
-                            &u, &us, &n0, &p, &epse, &epsB, &xi_N, &spec_type, &rad_type))
+                            &u, &us, &n0, &p, &epse, &epsB, &xi_N, &spec_type, &rad_type, &cool_type))
     {
         //PyErr_SetString(PyExc_RuntimeError, "Could not parse arguments.");
         return NULL;
@@ -459,7 +462,7 @@ static PyObject *jet_emissivity(PyObject *self, PyObject *args)
 
     // Calculate it!
     double em = emissivity(nu, R, mu, te, u, us, n0, p, epse, epsB, 
-                            xi_N, spec_type, rad_type);
+                            xi_N, spec_type, rad_type, cool_type);
 
     //Build output
     PyObject *ret = Py_BuildValue("d", em);
@@ -478,6 +481,7 @@ static PyObject *jet_intensity(PyObject *self, PyObject *args, PyObject *kwargs)
     int jet_type = jet_type_default;
     int spec_type = spec_type_default;
     int rad_type = rad_type_default;
+    int cool_type = cool_type_default;
     double theta_obs = theta_obs_default;
     double E_iso_core = E_iso_core_default;
     double theta_h_core = theta_h_core_default;
@@ -510,7 +514,7 @@ static PyObject *jet_intensity(PyObject *self, PyObject *args, PyObject *kwargs)
     int counterjet = counterjet_default;
     int gamma_type = gamma_type_default;
 
-    static char *kwlist[] = {"theta", "phi", "t", "nu", "jetType", "specType", "radType",
+    static char *kwlist[] = {"theta", "phi", "t", "nu", "jetType", "specType", "radType", "coolType",
                                 "thetaObs", "E0", "thetaCore", "thetaWing",
                                     "b", "L0", "q", "ts", "n0", "p",
                                     "epsilon_e", "epsilon_B", "xi_N", "d_L",
@@ -526,7 +530,7 @@ static PyObject *jet_intensity(PyObject *self, PyObject *args, PyObject *kwargs)
     if(!PyArg_ParseTupleAndKeywords(args, kwargs,
                 "OOOO|iii""ddddddddddddddd""dd""iiidddii""O""iii",
                 kwlist,
-                &theta_obj, &phi_obj, &t_obj, &nu_obj, &jet_type, &spec_type, &rad_type,
+                &theta_obj, &phi_obj, &t_obj, &nu_obj, &jet_type, &spec_type, &rad_type, &cool_type,
                 &theta_obs, &E_iso_core, &theta_h_core, &theta_h_wing, &b, &L0,
                     &q, &ts, &n_0, &p, &epsilon_E, &epsilon_B, &ksi_N, &d_L,
                     &g0,
@@ -677,11 +681,11 @@ static PyObject *jet_intensity(PyObject *self, PyObject *args, PyObject *kwargs)
                         tRes, latRes, int_type,
                         rtol_struct, rtol_phi, rtol_theta,
                         nmax_phi, nmax_theta,
-                        spec_type, rad_type, mask, masklen,
+                        spec_type, rad_type, cool_type, mask, masklen,
                         spread, counterjet, gamma_type);
 
     // Calculate the intensity!
-    calc_intensity(jet_type, spec_type, rad_type, theta, phi, t, nu, Inu, N, &fp);
+    calc_intensity(jet_type, spec_type, rad_type, cool_type, theta, phi, t, nu, Inu, N, &fp);
    
     if(fp.error)
     {
@@ -737,6 +741,7 @@ static PyObject *jet_shockVals(PyObject *self, PyObject *args, PyObject *kwargs)
     int gamma_type = gamma_type_default;
     int spec_type = spec_type_default;
     int rad_type = rad_type_default;
+    int cool_type = cool_type_default;
     double g0 = g0_default;
     double E_core_global = E_core_global_default;
     double theta_h_core_global = theta_h_core_global_default;
@@ -748,7 +753,7 @@ static PyObject *jet_shockVals(PyObject *self, PyObject *args, PyObject *kwargs)
     int nmax_phi = nmax_phi_default;
     int nmax_theta = nmax_theta_default;
 
-    static char *kwlist[] = {"theta", "phi", "t", "jetType", "specType", "radType",
+    static char *kwlist[] = {"theta", "phi", "t", "jetType", "specType", "radType", "coolType",
                                 "thetaObs", "E0", "thetaCore", "thetaWing",
                                     "b", "L0", "q", "ts", "n0", "p",
                                     "epsilon_e", "epsilon_B", "xi_N", "d_L",
@@ -764,7 +769,7 @@ static PyObject *jet_shockVals(PyObject *self, PyObject *args, PyObject *kwargs)
     if(!PyArg_ParseTupleAndKeywords(args, kwargs,
                 "OOO|iii""ddddddddddddddd""dd""iiidddii""O""iii",
                 kwlist,
-                &theta_obj, &phi_obj, &t_obj, &jet_type, &spec_type, &rad_type,
+                &theta_obj, &phi_obj, &t_obj, &jet_type, &spec_type, &rad_type, &cool_type,
                 &theta_obs, &E_iso_core, &theta_h_core, &theta_h_wing, &b, &L0,
                     &q, &ts, &n_0, &p, &epsilon_E, &epsilon_B, &ksi_N, &d_L,
                     &g0,
@@ -912,7 +917,7 @@ static PyObject *jet_shockVals(PyObject *self, PyObject *args, PyObject *kwargs)
                         tRes, latRes, int_type,
                         rtol_struct, rtol_phi, rtol_theta,
                         nmax_phi, nmax_theta,
-                        spec_type, rad_type, mask, masklen,
+                        spec_type, rad_type, cool_type, mask, masklen,
                         spread, counterjet, gamma_type);
 
     // Calculate the intensity!

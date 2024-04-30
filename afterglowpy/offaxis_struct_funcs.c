@@ -325,11 +325,11 @@ void make_R_table(struct fluxParams *pars)
         char msg[MSG_LEN];
         int c = 0;
         c += snprintf(msg, MSG_LEN,
-                      "Shock integration Error: R[0]=%.3e  (fac=%.3e)\n",
+                      "Shock integration Error: R[0]=%.5e  (fac=%.5e)\n",
                       R_table[0], fac);
 
         c += snprintf(msg+c, MSG_LEN-c,
-                      "    t0=%.3e R0=%.3e u0=%.3e th0=%.3e\n",
+                      "    t0=%.5e R0=%.5e u0=%.5e th0=%.5e\n",
                       Rt0, R0, u0, th0);
         set_error(pars, msg);
         return;
@@ -340,11 +340,11 @@ void make_R_table(struct fluxParams *pars)
         char msg[MSG_LEN];
         int c = 0;
         c += snprintf(msg, MSG_LEN,
-                      "Shock integration Error: R[-1]=%.3e  (fac=%.3e)\n",
+                      "Shock integration Error: R[-1]=%.5e  (fac=%.5e)\n",
                       R_table[table_entries-1], fac);
 
         c += snprintf(msg+c, MSG_LEN-c,
-                      "    t0=%.3e R0=%.3e u0=%.3e th0=%.3e\n",
+                      "    t0=%.5e R0=%.5e u0=%.5e th0=%.5e\n",
                       Rt0, R0, u0, th0);
         set_error(pars, msg);
         return;
@@ -353,10 +353,85 @@ void make_R_table(struct fluxParams *pars)
 
 ///////////////////////////////////////////////////////////////////////////////
 
+double calc_nu_a(double nu_c, double nu_m, double ksiN, double nprime, double g, double B, double R, double p) {
+    double nu_peak = (nu_c < nu_m) ? nu_c : nu_m;
+    double g_peak = sqrt(4.0 * PI * m_e * v_light * nu_peak / 3.0 / e_e / B);
+    double g_eos = (4.0 * g + 1) / 3.0 / g;
+    double kT = g_peak * m_e * v_light * v_light;
+    double em = 0.5 * (p - 1.0) * sqrt(3.0) * e_e * e_e * e_e * ksiN * nprime * B
+                        / (m_e * v_light * v_light);
+    double I = em * R / g;
+
+    double nu_a = pow(I * v_light * v_light / 2.0 / kT / pow(nu_peak, 1.0 / 3.0), 3.0 / 5.0);
+
+    if (nu_a > nu_peak) {
+        nu_a = pow(I / m_e * pow(3 * e_e * B / 4. / PI / m_e / v_light, 0.5), 2. / 5.);
+    }
+
+    return nu_a;
+}
+
+double gamma_to_nu(double g, double B) {
+    return 3.0 * g * g * e_e * B / (4.0 * PI * m_e * v_light);
+}
+
+double syn_eta(double nu_m, double nu_c, double p) {
+    return pow(nu_m / nu_c, (p - 2) / 2) > 1 ? 1 : pow(nu_m / nu_c, (p - 2) / 2);
+}
+
+double IC_eta(double eta, double eta_KN, double epse, double epsB) {
+    return (sqrt(1 + 4 * eta * eta_KN * epse / epsB) - 1) / 2;
+}
+
+double compton_sigma(double nu) {
+    double x = h_planck * nu / (m_e * v_light * v_light);
+    if (x < 1e-2) {
+        return sigma_T * (1 - 2 * x + 26 / 5 * x * x);
+    } else if (x > 1e2) {
+        return 3. / 8 * sigma_T * (log(2 * x) + 1.0 / 2) / x;
+    } else {
+        return 0.75 * sigma_T *
+               ((1 + x) / (x * x * x) * (2 * x * (1 + x) / (1 + 2 * x) - log(1 + 2 * x)) + log(1 + 2 * x) / (2 * x) -
+                (1 + 3 * x) / (1 + 2 * x) / (1 + 2 * x));
+    }
+}
+
+double compton_Y(double nu, double nu_m, double nu_c, double p, double epse, double epsB, int coolType) {
+    double eta = syn_eta(nu_m, nu_c, p);
+    double eta_KN = 1;
+    double sigma_c = sigma_T;
+    if (coolType == 2) {
+        sigma_c = compton_sigma(nu);
+        eta_KN = sigma_c / sigma_T;
+    }
+    double Y = IC_eta(eta, eta_KN, epse, epsB);
+    double Y_ = 2 * Y;
+
+    // Fan & Piran 06
+    for (; fabs((Y_ - Y) / Y) > 1e-6;) {
+        Y_ = Y;
+        double nu_c_Y = nu_c / pow((1 + Y), 2);
+
+        eta = syn_eta(nu_m, nu_c_Y, p);
+
+        if (coolType == 2) {
+            sigma_c = compton_sigma(nu);
+            eta_KN = sigma_c / sigma_T;
+        }
+
+        // fprintf(stderr, "eta:%.5e eta_KN:%.5e \n", eta, eta_KN);
+
+        Y = IC_eta(eta, eta_KN, epse, epsB);
+    }
+
+    return Y;
+}
+
 double emissivity(double nu, double R, double mu, double te,
                     double u, double us, double n0, double p, double epse,
-                    double epsB, double ksiN, int specType, int radType)
+                    double epsB, double ksiN, int specType, int radType, int coolType)
 {
+
     if(us < 1.0e-5)
     {
         //shock is ~ at sound speed of warm ISM. Won't shock, approach invalid.
@@ -365,30 +440,29 @@ double emissivity(double nu, double R, double mu, double te,
     if(R == 0.0)
         return 0.0;
 
-    // set remaining fluid quantities
+    // set fluid quantities
     double g = sqrt(1+u*u);
     double beta = u/g;
     double betaS = us / sqrt(1+us*us);
     double nprime = 4.0 * n0 * g; // comoving number density
-    double e_th = u*u/(g+1) * nprime * m_p * v_light * v_light;
-    double B = sqrt(epsB * 8.0 * PI * e_th);
+    double e_th = (g-1) * nprime * m_p * v_light * v_light; // comoving thermal eneergy
+    double B = sqrt(epsB * 8.0 * PI * e_th); // comoving magnetic field strength
     double a = (1.0 - mu * beta); // beaming factor
     double ashock = (1.0 - mu * betaS); // shock velocity beaming factor
-    double DR = R / (12.0 * g*g * ashock);
+    double DR = R / (12.0 * g * g * ashock); // observed emission region
     if (DR < 0.0) DR *= -1.0; // DR is function of the absolute value of mu
 
     double epsebar;
     if(specType & EPS_E_BAR_FLAG)
         epsebar = epse;
     else
-        epsebar = (2.0-p) / (1.0-p) * epse;
+        epsebar = (p-2.0) / (p-1.0) * epse;
 
-    // set local emissivity 
     double nuprime = nu * g * a; // comoving observer frequency
-    // (A.18)
+
     double g_m = epsebar * e_th / (ksiN * nprime * m_e * v_light * v_light);
-    // (A.19)
-    double g_c = 6 * PI * m_e * g * v_light / (sigma_T * B * B * te);
+    double g_M = te * e_e * B / ksiN / m_p / v_light;
+    double g_c = 6 * PI * m_e * v_light / (sigma_T * B * B * te / g);
 
     //Inverse Compton adjustment of lfac_c
     if(specType & IC_COOLING_FLAG)
@@ -426,141 +500,202 @@ double emissivity(double nu, double R, double mu, double te,
         g_c /= X;
     }
 
-    // (A.18)
-    double nu_m = 3.0 * g_m * g_m * e_e * B / (4.0 * PI * m_e * v_light);
-    double nu_c = 3.0 * g_c * g_c * e_e * B / (4.0 * PI * m_e * v_light);
-    // nu_a by optical depth
-    double nu_a; 
-    if ((nu_c > nu_m && nuprime < nu_m) || (nu_c < nu_m && nuprime < nu_c) || (nu_c < nu_m && nuprime > nu_m))
-        nu_a = pow((pow(nu_m,1/3)*16*M_PI * m_e*m_e*v_light*v_light*g_m)
-            /(sqrt(3) * e_e*e_e*e_e * (p-1)*(p+2)*nprime*B*DR),1/(1/3-2));
-    else 
-        nu_a = pow((pow(nu_m,-p/2)*16*M_PI * m_e*m_e*v_light*v_light*g_m)
-            /(sqrt(3) * e_e*e_e*e_e * (p-1)*(p+2)*nprime*B*DR),1/(-p/2-2));
+    double nu_m = gamma_to_nu(g_m, B);
+    double nu_c = gamma_to_nu(g_c, B);
+    double nu_M = gamma_to_nu(g_M, B);
 
-    // From (Ryan+20 eq. 18)
-    double g_a = sqrt(16*m_e*v_light*nu_a/3/e_e/B);
+    double nu_a = calc_nu_a(nu_c, nu_m, ksiN, nprime, g, B, R, p);
+    double g_a = sqrt(4.0 * PI * m_e * v_light * nu_a / 3.0 / e_e / B);
 
+    // KN correction
+    double Y = 0;
+    // double nu_hat = sqrt(3 * e_e * B * m_e * v_light * v_light * v_light / 4 / PI / nuprime) / h_planck;
+    Y = compton_Y(nuprime, nu_m, nu_c, p, epse, epsB, coolType);
+    if (coolType != 0) {
+        g_c /= 1 + Y;
+        g_M /= 1 + Y;
+        nu_c = gamma_to_nu(g_c, B);
+        nu_M = gamma_to_nu(g_M, B);
+    }
+
+    // fprintf(stderr, "gamma':%.5e \n", g);
+    // fprintf(stderr, "nu:%.5e nu':%.5e \n", nu, nuprime);
+    // fprintf(stderr, "Y:%.5e \n", Y);
+    // fprintf(stderr, "nu_a:%.5e nu_m:%.5e nu_c:%.5e\n", nu_a, nu_m, nu_c);
+    // fprintf(stderr, "---------------------\n");
+    
     double freq = 0.0; // frequency dependent part of emissivity
     double em;
     // Synchrotron
     if (radType == 0) {
-        // (A.17)
         em = 0.5*(p - 1.0)*sqrt(3.0) * e_e*e_e*e_e * ksiN * nprime * B
                         / (m_e*v_light*v_light);
-        // set frequency dependence
-        // (A.16)
-        if (nu_c > nu_m)
+        // (Gao+13)
+        // Weak Absorption
+        // Slow Cooling
+        if (nu_a < nu_m && nu_m < nu_c)
+        {
+            if (nuprime <= nu_a)
+                freq = pow(nu_a / nu_m, 1.0 / 3.0) * pow(nuprime / nu_a, 2.0);
+            else if (nuprime <= nu_m)
+                freq = pow(nuprime / nu_m, 1.0 / 3.0);
+            else if (nuprime <= nu_c)
+                freq = pow(nuprime / nu_m, 0.5 * (1.0 - p));
+            else
+                freq = pow(nu_c / nu_m, 0.5 * (1.0 - p)) * pow(nuprime / nu_c, -0.5 * p) * exp(-nu / nu_M);
+        }
+        else if (nu_m < nu_a && nu_a < nu_c)
         {
             if (nuprime < nu_m)
-                freq = pow(nuprime / nu_m, 1.0 / 3.0 );
+                freq = pow(nu_m / nu_a, 0.5 * (p + 4.0)) * pow(nuprime / nu_m, 2.0);
+            else if (nuprime < nu_a)
+                freq = pow(nu_a / nu_m, 0.5 * (1.0 - p)) * pow(nuprime / nu_a, 5.0 / 2.0);
             else if (nuprime < nu_c)
                 freq = pow(nuprime / nu_m, 0.5 * (1.0 - p));
             else
-                freq = pow(nu_c / nu_m, 0.5 * (1.0 - p)) * pow(nuprime / nu_c, -0.5*p);
+                freq = pow(nu_c / nu_m, 0.5 * (1.0 - p)) * pow(nuprime / nu_c, -0.5 * p) * exp(-nu / nu_M);
+        }
+        else if (nu_a < nu_c && nu_c < nu_m)
+        {
+            if (nuprime < nu_a) 
+                freq = pow(nu_a / nu_c, 1.0 / 3.0) * pow(nuprime / nu_a, 2.0);
+            else if (nuprime < nu_c)
+                freq = pow(nuprime / nu_c, 1.0 / 3.0);
+            else if (nuprime < nu_m)
+                freq = pow(nuprime / nu_c, -0.5);
+            else
+                freq = pow(nu_c / nu_m, 0.5) * pow(nuprime / nu_m, -0.5 * p) * exp(-nu / nu_M);
+        }
+        // Strong Absorption
+        // Fast Coolings
+        else if (nu_c < nu_a && nu_a < nu_m)
+        {
+            double discontinuity_ratio = g_c / 3.0 / g_a;
+            if (nuprime < nu_a)
+                freq = pow(nuprime / nu_a, 2.0);
+            else if (nuprime < nu_m)
+                freq = discontinuity_ratio * pow(nuprime / nu_a, -0.5);
+            else
+                freq = discontinuity_ratio * pow(nu_m / nu_a, -0.5) * pow(nuprime / nu_m, -0.5 * p) * exp(-nu / nu_M);
         }
         else
         {
-            if (nuprime < nu_c)
-                freq = pow(nuprime / nu_c, 1.0/3.0);
-            else if (nuprime < nu_m)
-                freq = sqrt(nu_c / nuprime);
+            double discontinuity_ratio;
+            if (nu_m < nu_c && nu_c < nu_a)
+                discontinuity_ratio = (p - 1.0) * g_c / 3.0 / g_a * pow(g_m / g_a, p - 1);
             else
-                freq = sqrt(nu_c/nu_m) * pow(nuprime / nu_m, -0.5 * p);
+                discontinuity_ratio = g_c / 3.0 / g_a * pow(g_m / g_a, p - 1);
+            if (nuprime < nu_a)
+                freq = pow(nuprime / nu_a, 2.0);
+            else
+                freq = discontinuity_ratio * pow(nuprime / nu_a, -0.5 * p) * exp(-nu / nu_M);
         }
     }
     // SSC
     else if (radType == 1) {
-        double tau_es = sigma_T * n0 * DR;
+
+        double tau_es = sigma_T * nprime * DR * g;
         em = 0.5*(p - 1.0)*sqrt(3.0) * e_e*e_e*e_e * ksiN * nprime * B
-                    / (m_e*v_light*v_light) * tau_es;
+                        / (m_e*v_light*v_light) * tau_es;
         double x0 = 1;
         // set frequency dependence
-        if (nu_a < nu_m && nu_m < nu_c) { // case 1
-            if (nuprime < nu_ic(g_m,nu_a,x0))
-                freq = pow(nu_a/nu_m,1/3)
+        // Gao+13
+        if (nu_a < nu_m && nu_m < nu_c) {
+            if (nuprime < nu_ic(g_m,nu_a,x0)){
+                freq = pow(nu_a/nu_m,1.0/3.0)
                     *(nuprime/nu_ic(g_m,nu_a,x0))
-                    *5*(p-1)/(2*(p+1));
-            else if (nuprime < nu_ic(g_m,nu_m,x0))
-                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),1/3)
-                    *3*(p-1)/(2*(p-1/3));
-            else if (nuprime < nu_ic(g_m,nu_c,x0))
-                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
-                    *(p-1)/(p+1)
-                    *((4*(p+1/3)/((p+1)*(p-1/3))+log(nuprime/nu_ic(g_m,nu_m,x0))));
-            else if (nuprime < nu_ic(g_c,nu_c,x0))
-                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
-                    *(p-1)/(p+1)
-                    *((2*(2*p+3)/(p+2)-2/((p+1)*(p+2))+log(nu_ic(g_c,nu_c,x0)/nuprime)));
-            else
-                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
-                    *(p-1)/(p+1)*(nu_c/nu_m)
-                    *((2*(2*p+3)/(p+2)-2/((p+2)*(p+2))+((p+1)/(p+2)*log(nuprime/nu_ic(g_c,nu_c,x0)))));
+                    *5.0*(p-1.0)/(2.0*(p+1.0));
+            }
+            else if (nuprime < nu_ic(g_m,nu_m,x0)){
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),1.0/3.0)
+                    *3.0*(p-1.0)/(2.0*(p-1.0/3.0));
+            }
+            else if (nuprime < nu_ic(g_m,nu_c,x0)){
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1.0-p)/2.0)
+                    *(p-1.0)/(p+1.0)
+                    *((4.0*(p+1.0/3.0)/((p+1.0)*(p-1.0/3.0))+log(nuprime/nu_ic(g_m,nu_m,x0))));
+            }
+            else if (nuprime < nu_ic(g_c,nu_c,x0)){
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1.0-p)/2.0)
+                    *(p-1.0)/(p+1.0)
+                    *((2.0*(2.0*p+3.0)/(p+2.0)-2.0/((p+1.0)*(p+2.0))+log(nu_ic(g_c,nu_c,x0)/nuprime)));
+            }
+            else{
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2.0)
+                    *(p-1.0)/(p+1.0)*(nu_c/nu_m)
+                    *((2.0*(2.0*p+3.0)/(p+2.0)-2.0/((p+2.0)*(p+2.0))+((p+1.0)/(p+2.0)*log(nuprime/nu_ic(g_c,nu_c,x0)))));
+            }
         }
-        else if (nu_m < nu_a && nu_a < nu_c) { // case 2
+        else if (nu_m < nu_a && nu_a < nu_c) {
             if (nuprime < nu_ic(g_m,nu_a,x0))
-                freq = pow(nu_m/nu_a,(p+1)/2)
-                    *(2*(p+4)*(p-1)/(3*(p+1)*(p+1)))
+                freq = pow(nu_m/nu_a,(p+1.0)/2.0)
+                    *(2.0*(p+4.0)*(p-1.0)/(3.0*(p+1.0)*(p+1.0)))
                     *(nuprime/nu_ic(g_m,nu_m,x0));
             else if (nuprime < nu_ic(g_m,nu_c,x0))
-                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
-                    *(p-1)/(p+1)
-                    *((2*(2*p+5)/((p+1)*(p+4))+log(nuprime/nu_ic(g_m,nu_a,x0))));
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1.0-p)/2.0)
+                    *(p-1.0)/(p+1.0)
+                    *((2.0*(2.0*p+5.0)/((p+1.0)*(p+4.0))+log(nuprime/nu_ic(g_m,nu_a,x0))));
             else if (nuprime < nu_ic(g_c,nu_a,x0))
-                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
-                    *(p-1)/(p+1)
-                    *(2+(2/(p+4))+log(nu_c/nu_a));
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1.0-p)/2.0)
+                    *(p-1.0)/(p+1.0)
+                    *(2.0+(2.0/(p+4.0))+log(nu_c/nu_a));
             else if (nuprime < nu_ic(g_c,nu_c,x0))
-                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1-p)/2)
-                    *(p-1)/(p+1)
-                    *((2*(2*p+1)/(p+1)+log(nu_ic(g_c,nu_c,x0)/nuprime)));
-            else
-                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
-                    *(p-1)/(p+2)
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),(1.0-p)/2.0)
+                    *(p-1.0)/(p+1.0)
+                    *((2.0*(2.0*p+1.0)/(p+1.0)+log(nu_ic(g_c,nu_c,x0)/nuprime)));
+            else{
+                freq = pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2.0)
+                    *(p-1.0)/(p+2.0)
                     *(nu_c/nu_m)
-                    *((2*(2*p+5)/(p+2)+(log(nuprime/nu_ic(g_c,nu_c,x0)))));
+                    *((2.0*(2.0*p+5.0)/(p+2.0)+(log(nuprime/nu_ic(g_c,nu_c,x0)))));
+            }
         }
-        else if (nu_a < nu_c && nu_c < nu_m) { // case 3
-            if (nuprime < nu_ic(g_c,nu_a,x0))
-                freq = pow(nu_a/nu_c,1/3)
-                    *(5/6)
+        else if (nu_a < nu_c && nu_c < nu_m) {
+            if (nuprime < nu_ic(g_c,nu_a,x0)){
+                freq = pow(nu_a/nu_c,1.0/3.0)
+                    *(5.0/6.0)
                     *(nuprime/nu_ic(g_c,nu_a,x0));
-            else if (nuprime < nu_ic(g_c,nu_c,x0))
-                freq = pow(nuprime/nu_ic(g_c,nu_c,x0),1/3)
-                    *(9/10);
-            else if (nuprime < nu_ic(g_c,nu_m,x0))
-                freq = pow(nuprime/nu_ic(g_c,nu_c,x0),(-1/2))
-                    *(1/3)
-                    *(28/15 + log(nuprime/nu_ic(g_c,nu_c,x0)));
-            else if (nuprime < nu_ic(g_m,nu_m,x0))
-                freq = pow(nuprime/nu_ic(g_c,nu_c,x0),-1/2)
-                    *(1/3)
-                    *((2*(p+5)/((p+2)*(p-1)))-(2/3)*((p-1)/(p+2))+log(nu_ic(g_m,nu_m,x0)/nuprime));
-            else
+            }
+            else if (nuprime < nu_ic(g_c,nu_c,x0)) {
+                freq = pow(nuprime/nu_ic(g_c,nu_c,x0),1.0/3.0)
+                    *(9.0/10.0);
+            }
+            else if (nuprime < nu_ic(g_c,nu_m,x0)) {
+                freq = pow(nuprime/nu_ic(g_c,nu_c,x0),-1.0/2.0)
+                    *(1.0/3.0)
+                    *(28.0/15.0 + log(nuprime/nu_ic(g_c,nu_c,x0)));
+            }
+            else if (nuprime < nu_ic(g_m,nu_m,x0)){
+                freq = pow(nuprime/nu_ic(g_c,nu_c,x0),-1.0/2.0)
+                    *(1.0/3.0)
+                    *((2.0*(p+5.0)/((p+2.0)*(p-1.0)))-(2.0/3.0)*((p-1.0)/(p+2.0))+log(nu_ic(g_m,nu_m,x0)/nuprime));
+            }
+            else {
                 freq = pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
-                    *(1/(p+2))
+                    *(1.0/(p+2.0))
                     *(nu_c/nu_m)
-                    *((2/3)*((p+5)/(p-1))-(2/3)*((p-1)/(p+2))+log(nuprime/nu_ic(g_m,nu_m,x0)));
+                    *((2.0/3.0)*((p+5.0)/(p-1.0))-(2.0/3.0)*((p-1.0)/(p+2.0))+log(nuprime/nu_ic(g_m,nu_m,x0)));
+            }
         }
-        else if (nu_c < nu_a && nu_a < nu_m) { // case 4
+        else if (nu_c < nu_a && nu_a < nu_m) {
             if (nuprime < nu_ic(g_a,nu_a,x0))
-                freq = (0.5*g_c/3/g_a+1)*(g_c/3/g_a+4)*(nuprime/nu_ic(g_a,nu_a,x0));
+                freq = (0.5*g_c/3/g_a+1.0)*(g_c/3/g_a+4.0)*(nuprime/nu_ic(g_a,nu_a,x0));
             else if (nuprime < nu_ic(g_a,nu_m,x0))
-                freq = g_c/3/g_a*pow(nuprime/nu_ic(g_a,nu_a,x0),-0.5)
-                    *(g_c/3/g_a/6+9/10+g_c/3/g_a/4*log(nuprime/nu_ic(g_a,nu_a,x0)));
+                freq = g_c/3.0/g_a*pow(nuprime/nu_ic(g_a,nu_a,x0),-0.5)
+                    *(g_c/3.0/g_a/6.0+9.0/10.0+g_c/3.0/g_a/4*log(nuprime/nu_ic(g_a,nu_a,x0)));
             else if (nuprime < nu_ic(g_m,nu_m,x0))
-                freq = pow(g_c/3/g_a,2)*pow(nuprime/nu_ic(g_a,nu_a,x0),-0.5)
-                    * (3/(p-1)-0.5+0.75*log(nu_ic(g_m,nu_m,x0)/nuprime));
+                freq = pow(g_c/3.0/g_a,2)*pow(nuprime/nu_ic(g_a,nu_a,x0),-0.5)
+                    * (3.0/(p-1.0)-0.5+0.75*log(nu_ic(g_m,nu_m,x0)/nuprime));
             else
-                freq = 9/(2*(p+2))*pow(g_c/3/g_a,2)*(nu_a/nu_m)*pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2)
-                    *(4/(p+3)*pow(g_a/g_m,p-1)*g_a/g_c+3*(p+1)/((p-1)*(p+2))+0.5*log(nuprime/nu_ic(g_m,nu_m,x0)));
+                freq = 9.0/(2.0*(p+2.0))*pow(g_c/3.0/g_a,2.0)*(nu_a/nu_m)*pow(nuprime/nu_ic(g_m,nu_m,x0),-p/2.0)
+                    *(4.0/(p+3.0)*pow(g_a/g_m,p-1.0)*g_a/g_c+3.0*(p+1.0)/((p-1.0)*(p+2.0))+0.5*log(nuprime/nu_ic(g_m,nu_m,x0)));
         }
-        else if (nu_c < nu_a && nu_m < nu_a) { // case 5 & 6
+        else if (nu_c < nu_m && nu_m < nu_a) {
             if (nuprime < nu_ic(g_a,nu_a,x0))
-                freq = (3*g_c/3/g_a/2/(p+2)+1)*(3*g_c/3/g_a/(p+2)+4)*(nuprime/nu_ic(g_a,nu_a,x0));
+                freq = (3.0*g_c/3.0/g_a/2.0/(p+2.0)+1.0)*(3.0*g_c/3.0/g_a/(p+2.0)+4.0)*(nuprime/nu_ic(g_a,nu_a,x0));
             else
-                freq = 1/(p+2)*(6*g_c/3/g_a/(p+3)+g_c/3/g_a*(9*g_c/3/g_a/2/(p+2)+1)+9*pow(g_c/3/g_a,2)/3*log(nuprime/nu_ic(g_a,nu_a,x0)))
-                    *pow(nuprime/nu_ic(g_a,nu_a,x0),-p/2);   
+                freq = 1.0/(p+2.0)*(6.0*g_c/3.0/g_a/(p+3.0)+g_c/3.0/g_a*(9.0*g_c/3.0/g_a/2.0/(p+2.0)+1.0)+9.0*pow(g_c/3.0/g_a,2.0)/3.0*log(nuprime/nu_ic(g_a,nu_a,x0)))
+                    *pow(nuprime/nu_ic(g_a,nu_a,x0),-p/2.0);   
         }
     }
 
@@ -664,9 +799,9 @@ double emissivity(double nu, double R, double mu, double te,
 }
 
 // Solve nu^IC_ij for gamma_i and nu_j
-double nu_ic (double g, double nu, double x0)
+double nu_ic (double g_i, double nu_j, double x0)
 {
-    return 4*g*g*nu*x0;
+    return 4*g_i*g_i*nu_j*x0;
 }
 
 double costheta_integrand(double aomct, void* params) // inner integral
@@ -740,7 +875,7 @@ double costheta_integrand(double aomct, void* params) // inner integral
     
     double dFnu =  emissivity(pars->nu_obs, R, mu, t_e, u, us,
                                 pars->n_0, pars->p, pars->epsilon_E,
-                                pars->epsilon_B, pars->ksi_N, pars->spec_type, pars->rad_type);
+                                pars->epsilon_B, pars->ksi_N, pars->spec_type, pars->rad_type, pars->cool_type);
 
     if(dFnu != dFnu || dFnu < 0.0)
     {
@@ -804,7 +939,7 @@ double phi_integrand(double a_phi, void* params) // outer integral
     pars->phi = a_phi;
     pars->cp = cos(a_phi);
   
-  // implement sideways spreading approximation until spherical symmetry reached
+    // implement sideways spreading approximation until spherical symmetry reached
     double theta_1 = pars->current_theta_cone_hi;
     double theta_0 = pars->current_theta_cone_low;
     double Dtheta = theta_1 - theta_0;
@@ -868,8 +1003,6 @@ double phi_integrand(double a_phi, void* params) // outer integral
     if(theta_0 >= theta_1)
         return 0.0;
  
-    //printf("# theta integration domain: %e - %e\n", theta_1 - Dtheta, theta_1); fflush(stdout);
- 
     // For a given phi, integrate over 1 - cos(theta)
 
     double sht0 = sin(0.5*theta_0);
@@ -909,9 +1042,6 @@ double phi_integrand(double a_phi, void* params) // outer integral
         result = romb(&costheta_integrand, omct0, omct1, pars->nmax_theta,
                         pars->atol_theta, pars->rtol_theta, params,
                         &Neval, &err, 0, check_error, NULL, NULL);
-        //printf("phi = %.3lf:  res=%.6lg  err=%.3lg  Neval=%d  tol=%.3g\n",
-        //        a_phi, result, err, Neval,
-        //        pars->atol_theta + pars->rtol_theta*result);
     }
     else if(pars->int_type == INT_TRAP_NL)
     {
@@ -964,22 +1094,20 @@ double phi_integrand(double a_phi, void* params) // outer integral
         return 0.0;
     }
     ERR_CHK_DBL(pars)
+    // printf("result = %.6f\n", result);
+    // if(result != result || result < 0.0)
+    // {
+    //     char msg[MSG_LEN];
+    //     int c = 0;
+    //     c += snprintf(msg, MSG_LEN,
+    //                  "bad result in phi_integrand :%.3le\n", result);
 
-    if(result != result || result < 0.0)
-    {
-        char msg[MSG_LEN];
-        int c = 0;
-        c += snprintf(msg, MSG_LEN,
-                     "bad result in phi_integrand :%.3le\n", result);
-
-        c += snprintf(msg+c, MSG_LEN-c,
-                     "   t_obs=%.3le theta_lo=%.3lf theta_hi=%.3lf phi=%.3lf\n",
-                     pars->t_obs, theta_0, theta_1, pars->phi);
-        set_error(pars, msg);
-        return 0.0;
-    }
-  
-    //printf("   a_phi: %.6lf (%.6le)\n", a_phi, result);
+    //     c += snprintf(msg+c, MSG_LEN-c,
+    //                  "   t_obs=%.3le theta_lo=%.3lf theta_hi=%.3lf phi=%.3lf\n",
+    //                  pars->t_obs, theta_0, theta_1, pars->phi);
+    //     set_error(pars, msg);
+    //     return 0.0;
+    // }
 
     return result;
 }
@@ -1043,9 +1171,6 @@ double find_jet_edge(double phi, double cto, double sto, double theta0,
             thb = th;
         i++;
     }
-
-    //printf("iter: %d, th0=%.6lf, th=%.6lf\n", i, theta0, tha);
-
     return tha;
 }
 
@@ -1165,23 +1290,23 @@ double flux(struct fluxParams *pars, double atol) // determine flux for a given 
 
     ERR_CHK_DBL(pars)
     
-    if(result != result || result < 0.0)
-    {
-        char msg[MSG_LEN];
-        int c = 0;
-        c += snprintf(msg, MSG_LEN,
-                     "bad result in flux() :%.3le\n", result);
+    // if(result != result || result < 0.0)
+    // {
+    //     char msg[MSG_LEN];
+    //     int c = 0;
+    //     c += snprintf(msg, MSG_LEN,
+    //                  "bad result in flux() :%.3le\n", result);
 
-        c += snprintf(msg+c, MSG_LEN-c,
-                "   t_obs=%.3le nu_obs=%.3le theta_lo=%.3lf theta_hi=%.3lf\n",
-                     pars->t_obs, pars->nu_obs, pars->current_theta_cone_low,
-                     pars->current_theta_cone_hi);
-        c += snprintf(msg+c, MSG_LEN-c,
-                "   Fcoeff=%.6le\n", Fcoeff);
-        set_error(pars, msg);
-        return 0.0;
-    }
-
+    //     c += snprintf(msg+c, MSG_LEN-c,
+    //             "   t_obs=%.3le nu_obs=%.3le theta_lo=%.3lf theta_hi=%.3lf\n",
+    //                  pars->t_obs, pars->nu_obs, pars->current_theta_cone_low,
+    //                  pars->current_theta_cone_hi);
+    //     c += snprintf(msg+c, MSG_LEN-c,
+    //             "   Fcoeff=%.6le\n", Fcoeff);
+    //     set_error(pars, msg);
+    //     return 0.0;
+    // }
+    // printf("result = %.6f\n", result);
     return result;
 }
 
@@ -1357,26 +1482,26 @@ double flux_cone(double t_obs, double nu_obs, double E_iso, double theta_h,
     Fboth = F1 + F2;
 
 
-    if(F1 != F1 || F1 < 0.0)
-    {
-        char msg[MSG_LEN];
-        int c = snprintf(msg, MSG_LEN, "bad F1 in flux_cone:%.3lg\n", F1);
-        c += snprintf(msg+c, MSG_LEN-c,
-                      "      t_obs=%.3le theta_lo=%.3lf theta_hi=%.3lf\n",
-                      t_obs, theta_cone_low, theta_cone_hi);
-        set_error(pars, msg);
-        return 0.0;
-    }
-    if(F2 != F2 || F2 < 0.0)
-    {
-        char msg[MSG_LEN];
-        int c = snprintf(msg, MSG_LEN, "bad F2 in flux_cone:%.3lg\n", F2);
-        c += snprintf(msg+c, MSG_LEN-c,
-                      "      t_obs=%.3le theta_lo=%.3lf theta_hi=%.3lf\n",
-                      t_obs, theta_cone_low, theta_cone_hi);
-        set_error(pars, msg);
-        return 0.0;
-    }
+    // if(F1 != F1 || F1 < 0.0)
+    // {
+    //     char msg[MSG_LEN];
+    //     int c = snprintf(msg, MSG_LEN, "bad F1 in flux_cone:%.3lg\n", F1);
+    //     c += snprintf(msg+c, MSG_LEN-c,
+    //                   "      t_obs=%.3le theta_lo=%.3lf theta_hi=%.3lf\n",
+    //                   t_obs, theta_cone_low, theta_cone_hi);
+    //     set_error(pars, msg);
+    //     return 0.0;
+    // }
+    // if(F2 != F2 || F2 < 0.0)
+    // {
+    //     char msg[MSG_LEN];
+    //     int c = snprintf(msg, MSG_LEN, "bad F2 in flux_cone:%.3lg\n", F2);
+    //     c += snprintf(msg+c, MSG_LEN-c,
+    //                   "      t_obs=%.3le theta_lo=%.3lf theta_hi=%.3lf\n",
+    //                   t_obs, theta_cone_low, theta_cone_hi);
+    //     set_error(pars, msg);
+    //     return 0.0;
+    // }
 
     //printf(" Fcone = %.6le\n", Fboth);
 
@@ -1440,7 +1565,7 @@ double intensity(double theta, double phi, double tobs, double nuobs,
 
     I = emissivity(pars->nu_obs, R, mu, t_e, u, us, pars->n_0,
                         pars->p, pars->epsilon_E, pars->epsilon_B, 
-                        pars->ksi_N, pars->spec_type, pars->rad_type);
+                        pars->ksi_N, pars->spec_type, pars->rad_type, pars->cool_type);
 
     return I;
 }
@@ -1964,7 +2089,7 @@ void shockVals_structCore(double *theta, double *phi, double *tobs,
     }
 }
 
-void calc_flux_density(int jet_type, int spec_type, int rad_type, double *t, double *nu,
+void calc_flux_density(int jet_type, int spec_type, int rad_type, int cool_type, double *t, double *nu,
                             double *Fnu, int N, struct fluxParams *fp)
 {
     int latRes = fp->latRes;
@@ -2022,7 +2147,7 @@ void calc_flux_density(int jet_type, int spec_type, int rad_type, double *t, dou
     //printf("  Calc took %ld evalutions\n", fp->nevals);
 }    
 
-void calc_intensity(int jet_type, int spec_type, int rad_type, double *theta, double *phi,
+void calc_intensity(int jet_type, int spec_type, int rad_type, int cool_type, double *theta, double *phi,
                             double *t, double *nu, double *Inu, int N,
                             struct fluxParams *fp)
 {
@@ -2138,6 +2263,7 @@ void setup_fluxParams(struct fluxParams *pars,
                     int nmax_phi, int nmax_theta,
                     int spec_type,
                     int rad_type,
+                    int cool_type,
                     double *mask, int nmask,
                     int spread, int counterjet, int gamma_type)
 {
@@ -2156,6 +2282,7 @@ void setup_fluxParams(struct fluxParams *pars,
 
     pars->spec_type = spec_type;
     pars->rad_type = rad_type;
+    pars->cool_type = cool_type;
     pars->gamma_type = gamma_type;
 
     pars->d_L = d_L;
@@ -2445,6 +2572,8 @@ void set_error(struct fluxParams *pars, char msg[])
             pars->spec_type);
     c += snprintf(dump+c, DUMP_MSG_LEN_MAX-c, "    rad_type: %d\n",
             pars->rad_type);
+    c += snprintf(dump+c, DUMP_MSG_LEN_MAX-c, "    cool_type: %d\n",
+            pars->cool_type);
     c += snprintf(dump+c, DUMP_MSG_LEN_MAX-c, "    gamma_type: %d\n",
             pars->gamma_type);
     c += snprintf(dump+c, DUMP_MSG_LEN_MAX-c, "    nmask: %d\n",

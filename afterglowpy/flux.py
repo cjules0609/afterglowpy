@@ -138,6 +138,9 @@ def fluxDensity(t, nu, *args, **kwargs):
 
     radType : int, optional
         Synchrotron (0), SSC (1)
+    
+    coolingType : int, optional
+        No cooling (0), SSC cooling (1), SSC cooling with KN (2)
 
     Returns
     -------
@@ -669,7 +672,7 @@ def parseArgs(args, kwargs):
                   FutureWarning)
 
     # Now for the fun part
-    jetKeys = ['jetType', 'specType', 'radType', 'thetaObs', 'E0', 'thetaCore',
+    jetKeys = ['jetType', 'specType', 'radType', 'coolType', 'thetaObs', 'E0', 'thetaCore',
                'thetaWing', 'b', 'L0', 'q', 'ts', 'n0', 'p', 'epsilon_e',
                'epsilon_B', 'xi_N', 'd_L', 'g0', 'LR', 'LO', 'LX', 'tAdd', 'z']
     sphKeys = ['jetType', 'specType', 'uMax', 'uMin', 'Er',
